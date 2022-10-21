@@ -1,5 +1,5 @@
 - 👋 Hi, I’m @ZQland
-- 👀 I’m interested in basketball, Valorant, working out, and just enjoying life
+- 👀 I’m interested in basketball, working out, Valorant and just enjoying life
 - 🌱 I’m currently learning full-stack development and blockahin development. 
 - 💞️ I’m looking to collaborate on an on-chain voting system. 
 - 📫 How to reach me ...
