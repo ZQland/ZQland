@@ -16,12 +16,18 @@ from datetime import datetime, timedelta, timezone
 
 import httpx
 
+from ..budget import BudgetExceeded
 from ..models import Creator, Post, Profile, make_id, split_id
 from .base import ProviderUnavailable
 
 APIFY = "https://api.apify.com/v2"
 TIKTOK_ACTOR = "clockworks~tiktok-scraper"
 INSTAGRAM_ACTOR = "apify~instagram-scraper"
+# Free-plan price per result (the highest tier, so caps err on the safe side) and the smallest
+# maxTotalChargeUsd each actor accepts. From the actors' pricing pages, November 2026.
+PRICE_PER_RESULT = {TIKTOK_ACTOR: 0.0037, INSTAGRAM_ACTOR: 0.0027}
+MIN_RUN_CHARGE = {TIKTOK_ACTOR: 0.50, INSTAGRAM_ACTOR: 0.0027}
+START_FEE = 0.001
 
 
 def dig(item: dict, path: str, default=None):
@@ -68,31 +74,71 @@ class ApifyClient:
     MAX_RUN_SECONDS = 15 * 60  # give up on a run after this long
     _DONE = {"SUCCEEDED", "FAILED", "ABORTED", "TIMED-OUT"}
 
-    def __init__(self, token: str, http: httpx.Client | None = None):
+    def __init__(self, token: str, http: httpx.Client | None = None, budget=None):
         self.token = token
         self.http = http or httpx.Client(timeout=60)
         self.results = 0       # Apify bills these actors per result
         self.cost_usd = 0.0    # as reported by Apify for finished runs
+        self.runs = 0
+        self.budget = budget   # ApifyBudget: asked before every run (see app/budget.py)
+        self.should_stop = None  # callable: True aborts the run in progress (scan cancelled)
 
     def _call(self, method: str, path: str, **kw) -> httpx.Response:
         resp = self.http.request(method, f"{APIFY}{path}",
                                  headers={"Authorization": f"Bearer {self.token}"}, **kw)
-        if resp.status_code in (401, 403):
+        if resp.status_code == 401:
             raise ProviderUnavailable("Apify rejected the token. Check APIFY_TOKEN.")
+        if resp.status_code in (402, 403):
+            try:
+                msg = resp.json()["error"]["message"]
+            except (ValueError, KeyError, TypeError):
+                msg = resp.text[:200]
+            if any(w in msg.lower() for w in ("limit", "usage", "credit", "payment", "plan")):
+                raise BudgetExceeded(f"Apify refused the run: {msg}")
+            raise ProviderUnavailable(f"Apify refused the request ({resp.status_code}): {msg}")
         resp.raise_for_status()
         return resp
 
-    def run(self, actor: str, actor_input: dict) -> list[dict]:
-        run = self._call("POST", f"/acts/{actor}/runs", params={"waitForFinish": self.POLL_SECONDS},
-                         json=actor_input).json()["data"]
+    def _caps(self, actor: str, expected_items: int | None) -> dict:
+        """Run options that hold the run to the budget: a result cap and Apify's own charge cap."""
+        params: dict = {}
+        price = PRICE_PER_RESULT.get(actor)
+        if self.budget is not None:
+            allowance = self.budget.allowance(minimum=price + START_FEE if price else 0.01)
+            if allowance != float("inf"):
+                if price:  # pay-per-result: the item cap is the precise dollar cap
+                    affordable = int((allowance - START_FEE) / price)
+                    expected_items = min(expected_items or affordable, affordable)
+                # Backstop enforced by Apify. Never below the actor's minimum, or the run won't start.
+                params["maxTotalChargeUsd"] = round(max(allowance, MIN_RUN_CHARGE.get(actor, 0.0)), 4)
+        if expected_items:
+            params["maxItems"] = max(int(expected_items), 1)
+        return params
+
+    def run(self, actor: str, actor_input: dict, expected_items: int | None = None) -> list[dict]:
+        params = {"waitForFinish": self.POLL_SECONDS, **self._caps(actor, expected_items)}
+        run = self._call("POST", f"/acts/{actor}/runs", params=params, json=actor_input).json()["data"]
+        self.runs += 1
         deadline = time.monotonic() + self.MAX_RUN_SECONDS
+        cancelled = False
         while run["status"] not in self._DONE:
+            if self.should_stop and self.should_stop():
+                # Stop paying for more results; keep what was already scraped (and billed).
+                run = self._call("POST", f"/actor-runs/{run['id']}/abort").json()["data"]
+                cancelled = True
+                break
             if time.monotonic() > deadline:
-                raise ProviderUnavailable(f"Apify run {run['id']} took longer than 15 minutes.")
+                self._call("POST", f"/actor-runs/{run['id']}/abort")
+                raise ProviderUnavailable(f"Apify run {run['id']} took longer than 15 minutes; aborted.")
             run = self._call("GET", f"/actor-runs/{run['id']}",
                              params={"waitForFinish": self.POLL_SECONDS}).json()["data"]
-        self.cost_usd += float(run.get("usageTotalUsd") or 0)
-        if run["status"] != "SUCCEEDED":
+        if cancelled:  # the abort response can predate the final bill; read it once more
+            run = self._call("GET", f"/actor-runs/{run['id']}", params={"waitForFinish": 10}).json()["data"]
+        cost = float(run.get("usageTotalUsd") or 0)
+        self.cost_usd += cost
+        if self.budget is not None:
+            self.budget.record(cost)
+        if not cancelled and run["status"] != "SUCCEEDED":
             raise ProviderUnavailable(f"Apify run {run['id']} ended with status {run['status']}.")
         items = self._call("GET", f"/datasets/{run['defaultDatasetId']}/items",
                            params={"clean": "true", "format": "json"}).json()
@@ -155,15 +201,30 @@ class TikTokScraperProvider:
                 "shouldDownloadCovers": False, "shouldDownloadSubtitles": False}
 
     def search(self, query: str, lookback_days: int, limit: int):
-        # Single words behave like hashtags on TikTok (#fitfam); phrases use keyword search.
-        key = {"hashtags": [query]} if " " not in query.strip() else {"searchQueries": [query]}
-        items = self.client.run(TIKTOK_ACTOR, {**self._base(limit), **key})
-        posts = [p for p in map(tiktok_post, items) if p and _within(p, lookback_days)]
-        return posts, None  # TikTok gives no reliable count of matching uploads
+        return self.search_many([query], lookback_days, limit)[query]
+
+    def search_many(self, queries: list[str], lookback_days: int, limit: int) -> dict:
+        """All keywords in one actor run (keyword search, not hashtags). TikTok tags each
+        result with the `searchQuery` it came from, which maps results back to keywords."""
+        out: dict = {q: ([], None) for q in queries}  # TikTok gives no count of matching uploads
+        if not queries:
+            return out
+        items = self.client.run(TIKTOK_ACTOR, {**self._base(limit), "searchQueries": list(queries)},
+                                expected_items=limit * len(queries))
+        by_query = {q.strip().lower(): q for q in queries}
+        for item in items:
+            q = by_query.get(str(item.get("searchQuery") or item.get("input") or "").strip().lower())
+            p = tiktok_post(item)
+            if q and p and _within(p, lookback_days):
+                out[q][0].append(p)
+        return out
 
     def _profiles_by_username(self, usernames: list[str], sample_size: int) -> list[Profile]:
+        if not usernames:
+            return []
         items = self.client.run(TIKTOK_ACTOR, {**self._base(sample_size), "profiles": usernames,
-                                               "profileSorting": "latest"})
+                                               "profileSorting": "latest"},
+                                expected_items=sample_size * len(usernames))
         grouped: dict[str, Profile] = {}
         for item in items:
             post = tiktok_post(item)
@@ -177,6 +238,9 @@ class TikTokScraperProvider:
         # One actor run returns follower counts and recent posts together.
         return self._profiles_by_username([split_id(c)[1] for c in creator_ids], sample_size)
 
+    def lookup_creators(self, handles: list[str], sample_size: int) -> list[Profile]:
+        return self._profiles_by_username(list(dict.fromkeys(map(_tiktok_username, handles))), sample_size)
+
     def lookup_creator(self, handle_or_url: str, sample_size: int) -> Profile:
         found = self._profiles_by_username([_tiktok_username(handle_or_url)], sample_size)
         if not found:
@@ -185,7 +249,7 @@ class TikTokScraperProvider:
 
     def refresh_media_url(self, post: Post) -> str | None:
         items = self.client.run(TIKTOK_ACTOR, {**self._base(1), "postURLs": [post.url],
-                                               "shouldDownloadVideos": True})
+                                               "shouldDownloadVideos": True}, expected_items=1)
         for item in items:
             urls = item.get("mediaUrls") or []
             if urls:
@@ -223,9 +287,11 @@ def _ig_username(text: str) -> str:
 
 
 class InstagramScraperProvider:
+    """Creator list only. Instagram's scraper can only "search" hashtags, and hashtags no longer
+    say much about what Reels get shown, so keyword scans skip Instagram."""
     platform = "instagram"
     name = "Apify Instagram scraper (third-party)"
-    can_search = True
+    can_search = False
 
     def __init__(self, token: str, client: ApifyClient | None = None):
         self.client = client or ApifyClient(token)
@@ -235,22 +301,19 @@ class InstagramScraperProvider:
         return self.client.results
 
     def search(self, query: str, lookback_days: int, limit: int):
-        # "reels" mode: the default "posts" mode returns a hashtag's top posts, which are mostly photos.
-        tag = re.sub(r"[^\w]", "", query.lower())  # Instagram hashtags are one word
-        items = self.client.run(INSTAGRAM_ACTOR, {
-            "directUrls": [f"https://www.instagram.com/explore/tags/{tag}/"],
-            "resultsType": "reels", "resultsLimit": limit})
-        posts = [p for p in map(instagram_post, items) if p and _within(p, lookback_days)]
-        return posts, None
+        raise ProviderUnavailable("Instagram is creator-list only: add creators on the Creators page.")
 
     def _details(self, usernames: list[str], sample_size: int) -> list[Profile]:
         """Follower counts come from "details"; play counts for recent Reels only come from
         "reels" mode ("details" lists recent posts but without view or play counts)."""
+        if not usernames:
+            return []
         urls = [f"https://www.instagram.com/{u}/" for u in usernames]
         details = self.client.run(INSTAGRAM_ACTOR, {"directUrls": urls, "resultsType": "details",
-                                                    "resultsLimit": 1})
+                                                    "resultsLimit": 1}, expected_items=len(urls))
         reels = self.client.run(INSTAGRAM_ACTOR, {"directUrls": urls, "resultsType": "reels",
-                                                  "resultsLimit": sample_size})
+                                                  "resultsLimit": sample_size},
+                                expected_items=sample_size * len(urls))
         by_owner: dict[str, list[Post]] = {}
         for item in reels:
             p = instagram_post(item)
@@ -271,6 +334,9 @@ class InstagramScraperProvider:
     def profiles(self, creator_ids, sample_size, follower_range=None):
         return self._details([split_id(c)[1] for c in creator_ids], sample_size)
 
+    def lookup_creators(self, handles: list[str], sample_size: int) -> list[Profile]:
+        return self._details(list(dict.fromkeys(map(_ig_username, handles))), sample_size)
+
     def lookup_creator(self, handle_or_url: str, sample_size: int) -> Profile:
         found = self._details([_ig_username(handle_or_url)], sample_size)
         if not found:
@@ -279,5 +345,5 @@ class InstagramScraperProvider:
 
     def refresh_media_url(self, post: Post) -> str | None:
         items = self.client.run(INSTAGRAM_ACTOR, {"directUrls": [post.url], "resultsType": "posts",
-                                                  "resultsLimit": 1})
+                                                  "resultsLimit": 1}, expected_items=1)
         return next((i.get("videoUrl") for i in items if i.get("videoUrl")), None)

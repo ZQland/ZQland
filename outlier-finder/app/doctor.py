@@ -81,6 +81,14 @@ def _live_checks(out: list[str], cfg) -> None:
             plan = (r.json().get("data", {}).get("plan") or {}).get("id") if r.status_code == 200 else None
             out.append(f"  {OK} Apify token works (plan: {plan})" if r.status_code == 200 else
                        f"  {BAD} Apify rejected the token ({r.status_code}). Copy it again from Settings → Integrations")
+            if r.status_code == 200:
+                from .budget import month_summary
+                m = month_summary(cfg)
+                if m:
+                    mark = BAD if m["left"] <= 0.01 else OK
+                    out.append(f"  {mark} Apify this month: ${m['used']:.2f} of ${m['cap']:.2f} "
+                               f"(budget ${m['budget']:.2f}, account limit ${m['account_limit']:.2f}), resets {m['resets']}"
+                               + (". TikTok/Instagram scans are paused" if m["left"] <= 0.01 else ""))
         except httpx.HTTPError as e:
             out.append(f"  {BAD} couldn't reach Apify: {e}")
     if cfg.anthropic_ready:

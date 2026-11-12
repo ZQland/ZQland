@@ -33,6 +33,13 @@ def _demo(platform: str, can_search: bool = True) -> FakeProvider:
     return _cached(("fake", platform, can_search), make)
 
 
+def _guarded(provider, cfg: Config):
+    """Outside scans (adding a creator, downloading a video), Apify runs still respect the monthly budget."""
+    from ..budget import ApifyBudget
+    provider.client.budget = ApifyBudget(cfg)
+    return provider
+
+
 def source_for(cfg: Config, platform: str) -> SourceStatus:
     mode = cfg.platforms.get(platform, "off")
     if mode == "off":
@@ -58,7 +65,7 @@ def source_for(cfg: Config, platform: str) -> SourceStatus:
             return SourceStatus(platform, mode, _demo(platform), True, "Add APIFY_TOKEN to use real data.")
         from .apify import TikTokScraperProvider
         return SourceStatus(platform, mode,
-                            _cached(("tt", cfg.apify_token), lambda: TikTokScraperProvider(cfg.apify_token)),
+                            _cached(("tt", cfg.apify_token), lambda: _guarded(TikTokScraperProvider(cfg.apify_token), cfg)),
                             False, "Apify TikTok scraper (third-party).")
 
     if platform == "instagram":
@@ -76,8 +83,8 @@ def source_for(cfg: Config, platform: str) -> SourceStatus:
             return SourceStatus(platform, mode, _demo(platform), True, "Add APIFY_TOKEN to use real data.")
         from .apify import InstagramScraperProvider
         return SourceStatus(platform, mode,
-                            _cached(("igs", cfg.apify_token), lambda: InstagramScraperProvider(cfg.apify_token)),
-                            False, "Apify Instagram scraper (third-party).")
+                            _cached(("igs", cfg.apify_token), lambda: _guarded(InstagramScraperProvider(cfg.apify_token), cfg)),
+                            False, "Apify Instagram scraper (third-party). Creator list only.")
 
     return SourceStatus(platform, "off", None, False, "Unknown platform.")
 

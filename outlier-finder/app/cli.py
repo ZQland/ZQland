@@ -1,9 +1,10 @@
 """Command line for scheduled jobs.
 
     python -m app.cli doctor                  # why does it say "demo data"? checks keys, .env, tools
-    python -m app.cli refresh                 # refresh tracked creators (daily follower snapshots)
-    python -m app.cli scan --genre fitness    # scan one genre on all searchable platforms
+    python -m app.cli refresh                 # check every tracked creator (daily follower snapshots)
+    python -m app.cli scan --genre fitness    # check tracked creators in one genre, all platforms
     python -m app.cli scan --genre all --platform tiktok
+    python -m app.cli scan --wide             # also search keywords (else: the switch on the Scans page)
 
 Schedule `refresh` once a day (cron, Task Scheduler, or a hosted cron) so the app
 builds the follower history it needs to estimate followers gained per video.
@@ -26,9 +27,11 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="cmd", required=True)
     sub.add_parser("doctor", help="check .env, keys, data sources and tools")
     sub.add_parser("refresh", help="refresh tracked creators and take follower snapshots")
-    scan = sub.add_parser("scan", help="scan keywords for outliers")
+    scan = sub.add_parser("scan", help="check the creator list (and keywords with --wide) for outliers")
     scan.add_argument("--genre", default="all")
     scan.add_argument("--platform", action="append", choices=PLATFORMS)
+    scan.add_argument("--wide", action="store_true", default=None,
+                      help="also search keywords (default: the Wide scan switch on the Scans page)")
     args = parser.parse_args(argv)
     if args.cmd == "doctor":
         from .doctor import run
@@ -42,12 +45,16 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "refresh":
         refresh_creators(cfg, start_scan(cfg, "refresh tracked creators (cli)"))
     else:
-        genres = list(cfg.genres) if args.genre == "all" else [args.genre]
-        platforms = args.platform or [s.platform for s in all_sources(cfg)
-                                      if s.provider is not None and s.provider.can_search]
-        run_scan(cfg, start_scan(cfg, f"{args.genre} on {', '.join(platforms)} (cli)"), genres, platforms)
+        if args.genre != "all" and args.genre not in cfg.genres:
+            parser.error(f"unknown genre {args.genre!r}; pick one of: all, {', '.join(cfg.genres)}")
+        genres = None if args.genre == "all" else [args.genre]
+        platforms = args.platform or [s.platform for s in all_sources(cfg) if s.provider is not None]
+        run_scan(cfg, start_scan(cfg, f"{args.genre} on {', '.join(platforms)} (cli)"), genres, platforms,
+                 wide=args.wide)
     last = recent_scans(cfg, 1)[0]
     print(f"{last['status']}: {last['message']}")
+    if last.get("cost_usd"):
+        print(f"Apify: ${last['cost_usd']:.2f}")
     return 0 if last["status"] in ("finished", "partial") else 1
 
 

@@ -11,6 +11,11 @@
 <div class="actions">
   <form method="post" action="/track/{{ c.id }}"><input type="hidden" name="tracked" value="{{ 0 if c.tracked else 1 }}">
     <button type="submit">{{ 'Stop tracking' if c.tracked else '+ Track creator' }}</button></form>
+  <form method="post" action="/creator/{{ c.id }}/genre" class="inline-genre">
+    <select name="genre" onchange="this.form.submit()" aria-label="Genre">
+      <option value="">No genre</option>
+      {% for g in genres %}<option value="{{ g }}" {% if g == c.genre %}selected{% endif %}>{{ g|replace('_',' ') }}</option>{% endfor %}
+    </select><noscript><button type="submit">Set genre</button></noscript></form>
   <form method="post" action="/creators/refresh"><input type="hidden" name="channel_id" value="{{ c.id }}">
     <button type="submit" {% if running %}disabled{% endif %}>↻ Refresh now</button></form>
 </div>

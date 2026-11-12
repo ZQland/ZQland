@@ -5,7 +5,7 @@ import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS channels (
@@ -19,7 +19,8 @@ CREATE TABLE IF NOT EXISTS channels (
     median_views_long REAL,
     sample_size INTEGER,
     tracked INTEGER NOT NULL DEFAULT 0,
-    updated_at TEXT
+    updated_at TEXT,
+    genre TEXT                        -- the creator's niche; set when tracked or found by a keyword
 );
 CREATE TABLE IF NOT EXISTS videos (
     id TEXT PRIMARY KEY,              -- "<platform>:<native id>"
@@ -71,7 +72,12 @@ CREATE TABLE IF NOT EXISTS scans (
     finished_at TEXT,
     status TEXT,
     quota_used INTEGER DEFAULT 0,
-    message TEXT
+    message TEXT,
+    cost_usd REAL DEFAULT 0           -- Apify charges for this scan
+);
+CREATE TABLE IF NOT EXISTS app_state (
+    key TEXT PRIMARY KEY,
+    value TEXT
 );
 CREATE TABLE IF NOT EXISTS analyses (
     video_id TEXT PRIMARY KEY REFERENCES videos(id),
@@ -97,13 +103,33 @@ def init_db(path: Path) -> None:
         version = conn.execute("PRAGMA user_version").fetchone()[0]
         has_tables = conn.execute(
             "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='videos'").fetchone()[0]
-        if has_tables and version < SCHEMA_VERSION:
+        if has_tables and version < 2:
             # v1 only held cached public data; rebuild it rather than migrate.
             conn.execute("PRAGMA foreign_keys = OFF")
             for t in _OLD_TABLES:
                 conn.execute(f"DROP TABLE IF EXISTS {t}")
         conn.executescript(SCHEMA)
+        if has_tables and version == 2:
+            _migrate_v2_to_v3(conn)
         conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+
+
+def _columns(conn, table: str) -> set[str]:
+    return {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+
+
+def _migrate_v2_to_v3(conn) -> None:
+    """Add creator genres and per-scan Apify cost, keeping all stored data."""
+    if "genre" not in _columns(conn, "channels"):
+        conn.execute("ALTER TABLE channels ADD COLUMN genre TEXT")
+    if "cost_usd" not in _columns(conn, "scans"):
+        conn.execute("ALTER TABLE scans ADD COLUMN cost_usd REAL DEFAULT 0")
+    # A creator's genre = the genre their keyword hits came from most often.
+    conn.execute("""
+        UPDATE channels SET genre = (
+            SELECT h.genre FROM hits h JOIN videos v ON v.id = h.video_id
+            WHERE v.channel_id = channels.id GROUP BY h.genre ORDER BY COUNT(*) DESC LIMIT 1)
+        WHERE genre IS NULL""")
 
 
 @contextmanager

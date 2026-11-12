@@ -1,6 +1,8 @@
 """Read-side queries used by the web pages and JSON API."""
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
 from . import scoring
 from .config import Config
 from .db import connect
@@ -16,29 +18,53 @@ SORTS = {
 }
 
 _VIDEO_COLS = """v.*, c.title AS channel_title, c.handle AS channel_handle, c.url AS channel_url,
-    c.followers, c.median_views_short, c.median_views_long, c.sample_size, c.tracked,
+    c.followers, c.median_views_short, c.median_views_long, c.sample_size, c.tracked, c.genre AS channel_genre,
     (SELECT status FROM analyses a WHERE a.video_id = v.id) AS analysis_status"""
 
 
-def list_outliers(cfg: Config, genre: str | None = None, keyword: str | None = None,
+Filter = str | list[str] | tuple[str, ...] | None
+
+
+def _any_of(where: list[str], params: list, column: str, value: Filter) -> None:
+    """Add `column IN (...)` for a filter given as one value or several; empty means no filter."""
+    values = [v for v in ([value] if isinstance(value, str) else (value or [])) if v]
+    if values:
+        where.append(f"{column} IN ({','.join('?' * len(values))})")
+        params.extend(values)
+
+
+def _since(days: int) -> str:
+    return (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def list_outliers(cfg: Config, genre: Filter = None, keyword: Filter = None,
                   min_outlier: float | None = None, max_subs: int | None = None,
                   sort: str = "outlier", only_qualifying: bool = True, limit: int = 200,
-                  platform: str | None = None) -> list[dict]:
-    where, params = [], []
-    if genre:
-        where.append("h.genre = ?"); params.append(genre)
-    if keyword:
-        where.append("h.keyword = ?"); params.append(keyword)
-    if platform:
-        where.append("v.platform = ?"); params.append(platform)
+                  platform: Filter = None) -> list[dict]:
+    """Outliers from keyword results AND from creators' own posts (creator list, lookups).
+    A genre matches a keyword hit's genre or the creator's genre; keywords match hits only."""
+    where, params = ["v.published_at >= ?"], [_since(cfg.settings.lookback_days)]
+    genres = [genre] if isinstance(genre, str) else [g for g in (genre or []) if g]
+    if genres:
+        marks = ",".join("?" * len(genres))
+        where.append(f"(c.genre IN ({marks}) OR EXISTS (SELECT 1 FROM hits g WHERE g.video_id = v.id "
+                     f"AND g.genre IN ({marks})))")
+        params += genres + genres
+    kws = [keyword] if isinstance(keyword, str) else [k for k in (keyword or []) if k]
+    if kws:
+        where.append(f"EXISTS (SELECT 1 FROM hits k WHERE k.video_id = v.id AND k.keyword IN ({','.join('?' * len(kws))}))")
+        params += kws
+    _any_of(where, params, "v.platform", platform)
     sql = f"""
         SELECT {_VIDEO_COLS},
                GROUP_CONCAT(DISTINCT h.genre) AS genres, GROUP_CONCAT(DISTINCT h.keyword) AS keywords
-        FROM videos v JOIN hits h ON h.video_id = v.id LEFT JOIN channels c ON c.id = v.channel_id
-        {"WHERE " + " AND ".join(where) if where else ""}
+        FROM videos v LEFT JOIN hits h ON h.video_id = v.id LEFT JOIN channels c ON c.id = v.channel_id
+        WHERE {" AND ".join(where)}
         GROUP BY v.id"""
     with connect(cfg.db_path) as conn:
         rows = [enrich(dict(r), cfg.settings) for r in conn.execute(sql, params)]
+    for r in rows:
+        r["source"] = "keyword" if r["keywords"] else "creator"
     if only_qualifying:
         rows = [r for r in rows if r["qualifies"]]
     if min_outlier:
@@ -47,6 +73,35 @@ def list_outliers(cfg: Config, genre: str | None = None, keyword: str | None = N
         rows = [r for r in rows if r["followers"] is not None and r["followers"] <= max_subs]
     rows.sort(key=SORTS.get(sort, SORTS["outlier"]), reverse=True)
     return rows[:limit]
+
+
+def suggested_creators(cfg: Config, platform: Filter = None, genre: Filter = None, limit: int = 60) -> list[dict]:
+    """Untracked creators already in the database with at least one qualifying outlier: free to add,
+    since their posts and medians are stored. Best candidates for the creator list."""
+    best: dict[str, dict] = {}
+    for v in list_outliers(cfg, genre=genre, platform=platform, limit=100_000):
+        if v["tracked"]:
+            continue
+        b = best.setdefault(v["channel_id"], {
+            "id": v["channel_id"], "platform": v["platform"], "title": v["channel_title"],
+            "handle": v["channel_handle"], "followers": v["followers"], "genre": v["channel_genre"],
+            "median": v["channel_median"], "outliers": 0, "best": 0.0})
+        b["outliers"] += 1
+        b["best"] = max(b["best"], v["outlier_score"] or 0)
+    return sorted(best.values(), key=lambda c: (c["outliers"], c["best"]), reverse=True)[:limit]
+
+
+def tracked_counts(cfg: Config) -> dict:
+    """Tracked creators per genre ("" = no genre) and per platform, for the Scans page."""
+    with connect(cfg.db_path) as conn:
+        rows = conn.execute("SELECT COALESCE(genre, '') AS genre, platform, COUNT(*) AS n FROM channels "
+                            "WHERE tracked = 1 GROUP BY 1, 2").fetchall()
+    by_genre: dict[str, int] = {}
+    by_platform: dict[str, int] = {}
+    for r in rows:
+        by_genre[r["genre"]] = by_genre.get(r["genre"], 0) + r["n"]
+        by_platform[r["platform"]] = by_platform.get(r["platform"], 0) + r["n"]
+    return {"genre": by_genre, "platform": by_platform, "total": sum(by_genre.values())}
 
 
 def get_video(cfg: Config, video_id: str) -> dict | None:
@@ -79,12 +134,13 @@ def followers_gained(cfg: Config, video: dict) -> dict:
     return est
 
 
-def list_creators(cfg: Config, platform: str | None = None, tracked_only: bool = True) -> list[dict]:
+def list_creators(cfg: Config, platform: Filter = None, tracked_only: bool = True,
+                  genre: Filter = None) -> list[dict]:
     where, params = [], []
     if tracked_only:
         where.append("c.tracked = 1")
-    if platform:
-        where.append("c.platform = ?"); params.append(platform)
+    _any_of(where, params, "c.platform", platform)
+    _any_of(where, params, "c.genre", genre)
     sql = f"""SELECT c.*, COUNT(v.id) AS videos_stored,
                      (SELECT COUNT(*) FROM follower_snapshots s WHERE s.channel_id = c.id) AS snapshots
               FROM channels c LEFT JOIN videos v ON v.channel_id = c.id
@@ -125,12 +181,10 @@ def creator_posts(cfg: Config, channel_id: str, sort: str = "outlier", limit: in
     return rows[:limit]
 
 
-def keyword_opportunities(cfg: Config, genre: str | None = None, platform: str | None = None) -> list[dict]:
+def keyword_opportunities(cfg: Config, genre: Filter = None, platform: Filter = None) -> list[dict]:
     where, params = [], []
-    if genre:
-        where.append("genre = ?"); params.append(genre)
-    if platform:
-        where.append("platform = ?"); params.append(platform)
+    _any_of(where, params, "genre", genre)
+    _any_of(where, params, "platform", platform)
     with connect(cfg.db_path) as conn:
         rows = conn.execute(
             "SELECT * FROM keyword_stats" + (" WHERE " + " AND ".join(where) if where else "")

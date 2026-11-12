@@ -53,6 +53,17 @@ class Settings:
 
 
 @dataclass
+class ApifySettings:
+    """Spending guards for the Apify scrapers (TikTok, Instagram). Apify bills per result."""
+    monthly_budget_usd: float = 5.0   # stop starting runs once this month's Apify usage reaches this
+    max_usd_per_scan: float = 1.0     # hard cap for one scan; Apify stops the run at this charge
+    baseline_posts: int = 15          # posts fetched the first time a creator is looked up (for the median)
+    refresh_posts: int = 6            # newest posts fetched on later scans; the median uses stored history
+    refresh_hours: int = 20           # don't re-fetch a creator more often than this
+    new_creators_per_scan: int = 15   # wide scan: at most this many new creators looked up per platform
+
+
+@dataclass
 class AnalysisSettings:
     model: str = "claude-opus-5-5"
     effort: str = "high"
@@ -67,6 +78,7 @@ class Config:
     genres: dict[str, list[str]] = field(default_factory=dict)
     platforms: dict[str, str] = field(default_factory=dict)   # platform -> official|scraper|off
     analysis: AnalysisSettings = field(default_factory=AnalysisSettings)
+    apify: ApifySettings = field(default_factory=ApifySettings)
     youtube_api_key: str | None = None
     apify_token: str | None = None
     ig_access_token: str | None = None
@@ -109,6 +121,7 @@ def load_config(niches_path: Path | None = None) -> Config:
         genres={g: list(kws) for g, kws in (raw.get("genres") or {}).items()},
         platforms=platforms,
         analysis=_pick(AnalysisSettings, raw.get("analysis")),
+        apify=_pick(ApifySettings, raw.get("apify")),
         youtube_api_key=env("YOUTUBE_API_KEY") or None,
         apify_token=env("APIFY_TOKEN") or None,
         ig_access_token=env("IG_ACCESS_TOKEN") or None,

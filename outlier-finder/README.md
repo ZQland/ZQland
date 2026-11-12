@@ -9,7 +9,7 @@ cd outlier-finder
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt          # also install ffmpeg: brew/apt/winget install ffmpeg
 uvicorn app.main:app --reload
-# open http://localhost:8000 → Scans → "Scan all"
+# open http://localhost:8000 → Creators: add creators (or track the suggestions) → Scans → "Scan all"
 ```
 
 With no keys, every platform runs on **demo data** and analyses use a demo analyzer, so you can explore everything first. The bar under the header shows which sources are live.
@@ -19,8 +19,8 @@ With no keys, every platform runs on **demo data** and analyses use a demo analy
 | Platform | `official` | `scraper` (Apify) |
 |---|---|---|
 | **YouTube Shorts** | YouTube Data API. Free, 10,000 units/day. **Default.** | n/a |
-| **TikTok** | Not possible: TikTok has no official API for other creators' videos | **Default.** Hashtag/keyword search, profiles, views, likes, comments, shares, saves, followers, video files |
-| **Instagram Reels** | Business Discovery: creators you add by handle (business/creator accounts), followers, likes, comments, Reel views. **No keyword search, no video files** | **Default.** Hashtag search, profiles, plays, likes, comments, followers, video files |
+| **TikTok** | Not possible: TikTok has no official API for other creators' videos | **Default.** Creator list; keyword search in wide scans (no hashtags). Profiles, views, likes, comments, shares, saves, followers, video files |
+| **Instagram Reels** | Business Discovery: creators you add by handle (business/creator accounts), followers, likes, comments, Reel views. **No keyword search, no video files** | **Default.** Creator list only (no hashtag search). Profiles, plays, likes, comments, followers, video files |
 
 > ⚠️ Scrapers collect public data in ways TikTok's and Instagram's terms of service don't allow. That's common for personal research, but a real risk in a product you sell. Set `instagram: official` (and `tiktok: off`) to stay inside the rules.
 
@@ -67,9 +67,15 @@ Claude can also use `ant auth login` instead of `ANTHROPIC_API_KEY`.
 
 - **Outliers:** filter by platform, genre and keyword. Sort by outlier score, views ÷ followers, engagement, velocity, views or newest.
 - **Opportunities:** keywords ranked by demand vs. supply, per platform.
-- **Creators:** add creators by handle or URL on any platform (a watchlist, like Sandcastles). Shows follower growth, outlier count and best outlier. **Refresh** pulls new posts and takes a follower snapshot.
+- **Creators:** your creator list, which is what scans check. Paste handles or profile URLs (many at once, each with a genre), or track **suggested creators**: ones already in the database with an outlier, free to add. Shows follower growth, outlier count and best outlier.
 - **Video:** all metrics plus the **Script & format breakdown**.
-- **Scans:** run keyword scans per genre and platform, and track progress and quota.
+- **Scans:** check the creator list per genre and platform, and see progress, cost and this month's Apify budget. The **Wide scan** switch adds keyword search (YouTube, TikTok) to find new creators.
+
+## How scanning works
+
+1. **Creator list (default).** For each platform, every tracked creator in the genre that wasn't checked in the last `apify.refresh_hours` is fetched in **one batched lookup**. New creators get `apify.baseline_posts` posts for a median; known ones only their `apify.refresh_posts` newest, scored against the median of their stored history. Platforms run in parallel.
+2. **Wide scan (switch, off by default).** Before that, every keyword of the genre is searched in **one batched run per platform**, and the `apify.new_creators_per_scan` most promising new creators are looked up in one more run.
+3. **Spending guards.** Before every Apify run the app reads this month's usage from Apify and stops at `apify.monthly_budget_usd` (or the account's own limit). Each run carries a result cap and Apify's `maxTotalChargeUsd`, so one scan can't spend more than `apify.max_usd_per_scan`. Cancelling a scan aborts the Apify run in progress.
 
 ## Script & format breakdown
 
@@ -96,8 +102,9 @@ The video and audio are deleted after analysis. The sampled frames are kept and 
 
 ```bash
 python -m app.cli refresh                       # tracked creators: new posts + follower snapshot
-python -m app.cli scan --genre fitness           # keyword scan on all searchable platforms
+python -m app.cli scan --genre fitness           # tracked creators in one genre, all platforms
 python -m app.cli scan --genre all --platform tiktok
+python -m app.cli scan --wide                    # also keyword search (default: the switch on the Scans page)
 ```
 
 Run `refresh` daily (cron: `15 7 * * * cd /path/outlier-finder && .venv/bin/python -m app.cli refresh`) to build the follower history behind the followers-gained estimates.
@@ -105,7 +112,7 @@ Run `refresh` daily (cron: `15 7 * * * cd /path/outlier-finder && .venv/bin/pyth
 ## Costs to expect
 
 - **YouTube:** free within 10,000 units/day. All 39 keywords use about 4,000–6,000 units.
-- **Apify:** per result. One TikTok or Instagram keyword is about `results_per_keyword` results, plus each new creator's recent posts. Creator data is cached for 7 days.
+- **Apify:** per post fetched (TikTok ≈ $0.0037, Instagram ≈ $0.0027 on the free plan). Checking a known creator ≈ 6 posts ≈ $0.02; adding a new one ≈ 15 posts ≈ $0.06. A wide scan adds `results_per_keyword` results per TikTok keyword. Capped by the `apify:` settings in `niches.yaml`.
 - **Claude:** one call per analysis, with roughly 8 images plus a transcript.
 
 ## Project layout

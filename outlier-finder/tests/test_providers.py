@@ -30,14 +30,21 @@ def mock_client(handler):
     return httpx.Client(transport=httpx.MockTransport(handler))
 
 
-def apify_mock(items_for, calls=None, statuses=("RUNNING", "SUCCEEDED")):
+def apify_mock(items_for, calls=None, statuses=("RUNNING", "SUCCEEDED"), params=None, aborts=None):
     """Mimics Apify: POST /acts/{actor}/runs → poll /actor-runs/{id} → GET /datasets/{id}/items."""
     state = {"body": None, "polls": list(statuses[1:])}
 
     def handler(req: httpx.Request):
         path = req.url.path
+        if req.method == "POST" and path.endswith("/abort"):
+            if aborts is not None:
+                aborts.append(path)
+            return httpx.Response(200, json={"data": {"id": "run1", "status": "ABORTED",
+                                                       "defaultDatasetId": "ds1", "usageTotalUsd": 0.02}})
         if req.method == "POST" and path.endswith("/runs"):
             state["body"] = json.loads(req.content)
+            if params is not None:
+                params.append(dict(req.url.params))
             if calls is not None:
                 calls.append((path, req.headers.get("authorization"), state["body"]))
             return httpx.Response(201, json={"data": {"id": "run1", "status": statuses[0],
@@ -81,19 +88,94 @@ def test_tiktok_scraper_requests():
                                                                     {**TT_ITEM, "id": "9", "isAd": True}], calls)))
     client.POLL_SECONDS = 0
     prov = TikTokScraperProvider("tok", client)
-    posts, supply = prov.search("fitfam", lookback_days=3650, limit=20)
+    posts, supply = prov.search("abs workout", lookback_days=3650, limit=20)
     path, auth, body = calls[0]
     assert path == "/v2/acts/clockworks~tiktok-scraper/runs"
-    assert auth == "Bearer tok" and body["hashtags"] == ["fitfam"] and body["resultsPerPage"] == 20
-    assert [p.id for p in posts] == ["tiktok:7300000000000000001"]  # error rows and ads dropped
+    # keyword search, never hashtags, even for one-word keywords
+    assert auth == "Bearer tok" and body["searchQueries"] == ["abs workout"] and "hashtags" not in body
+    assert body["resultsPerPage"] == 20
     assert supply is None and client.cost_usd == 0.01
-
-    prov.search("abs workout", 3650, 20)
-    assert calls[-1][2]["searchQueries"] == ["abs workout"]  # phrases use keyword search
+    prov.search("fitfam", 3650, 20)
+    assert calls[-1][2]["searchQueries"] == ["fitfam"] and "hashtags" not in calls[-1][2]
 
     profile = prov.lookup_creator("https://www.tiktok.com/@GymGuy", 30)
     assert calls[-1][2]["profiles"] == ["gymguy"] and profile.creator.followers == 12_000
     assert len(profile.recent_posts) == 1
+
+
+def test_tiktok_search_many_is_one_run_mapped_by_search_query():
+    calls, params = [], []
+    items = [{**TT_ITEM, "searchQuery": "abs workout"},
+             {**TT_ITEM, "id": "7300000000000000005", "searchQuery": "Fat Loss Routine"},
+             {**TT_ITEM, "id": "7300000000000000006", "searchQuery": "something else"}]
+    client = ApifyClient("tok", mock_client(apify_mock(lambda b: items, calls, params=params)))
+    client.POLL_SECONDS = 0
+    out = TikTokScraperProvider("tok", client).search_many(["abs workout", "fat loss routine", "ai tools"], 3650, 10)
+    assert len(calls) == 1 and calls[0][2]["searchQueries"] == ["abs workout", "fat loss routine", "ai tools"]
+    assert params[0]["maxItems"] == "30"  # 10 per keyword
+    assert [p.id for p in out["abs workout"][0]] == ["tiktok:7300000000000000001"]
+    assert [p.id for p in out["fat loss routine"][0]] == ["tiktok:7300000000000000005"]
+    assert out["ai tools"] == ([], None)
+
+
+def test_profiles_for_many_creators_is_one_run():
+    calls = []
+    client = ApifyClient("tok", mock_client(apify_mock(lambda b: [TT_ITEM, {**TT_ITEM, "id": "7", "authorMeta":
+                                                                            {"name": "other", "fans": 5}}], calls)))
+    client.POLL_SECONDS = 0
+    profs = TikTokScraperProvider("tok", client).profiles(["tiktok:gymguy", "tiktok:other"], 6)
+    assert len(calls) == 1 and calls[0][2]["profiles"] == ["gymguy", "other"] and calls[0][2]["resultsPerPage"] == 6
+    assert {p.creator.id for p in profs} == {"tiktok:gymguy", "tiktok:other"}
+
+
+class _Budget:
+    def __init__(self, left):
+        self.left, self.spent = left, 0.0
+
+    def allowance(self, minimum=0.0):
+        from app.budget import BudgetExceeded
+        if self.left < max(minimum, 0.01):
+            raise BudgetExceeded("Apify paused: over budget")
+        return self.left
+
+    def record(self, usd):
+        self.spent += usd
+
+
+def test_budget_caps_each_run_and_blocks_when_spent():
+    from app.budget import BudgetExceeded
+    calls, params = [], []
+    budget = _Budget(0.10)
+    client = ApifyClient("tok", mock_client(apify_mock(lambda b: [TT_ITEM], calls, params=params)), budget=budget)
+    client.POLL_SECONDS = 0
+    TikTokScraperProvider("tok", client).profiles(["tiktok:a", "tiktok:b"], 15)
+    # $0.10 buys 26 results at $0.0037 (after the start fee): fewer than the 30 asked for
+    assert params[0]["maxItems"] == "26"
+    assert float(params[0]["maxTotalChargeUsd"]) == 0.5  # never below the TikTok actor's minimum
+    assert budget.spent == 0.01  # Apify's reported cost is recorded
+    budget.left = 0.0
+    with pytest.raises(BudgetExceeded):
+        TikTokScraperProvider("tok", client).profiles(["tiktok:a"], 15)
+    assert len(calls) == 1  # no run was started
+
+
+def test_apify_usage_limit_is_reported_as_budget_not_token():
+    from app.budget import BudgetExceeded
+    handler = lambda r: httpx.Response(402, json={"error": {"type": "not-enough-usage-to-run-paid-actor",  # noqa: E731
+                                                            "message": "Monthly usage hard limit exceeded"}})
+    prov = TikTokScraperProvider("tok", ApifyClient("tok", mock_client(handler)))
+    with pytest.raises(BudgetExceeded, match="hard limit"):
+        prov.search("x", 30, 5)
+
+
+def test_cancel_aborts_the_run_and_keeps_scraped_items():
+    aborts = []
+    client = ApifyClient("tok", mock_client(apify_mock(lambda b: [TT_ITEM], statuses=("RUNNING", "RUNNING"),
+                                                       aborts=aborts)))
+    client.POLL_SECONDS = 0
+    client.should_stop = lambda: True
+    items = client.run("clockworks~tiktok-scraper", {})
+    assert aborts == ["/v2/actor-runs/run1/abort"] and len(items) == 1
 
 
 def test_apify_failed_run_is_reported():
@@ -115,20 +197,24 @@ def test_instagram_scraper_details():
         seen.append(body)
         if body["resultsType"] == "details":  # real "details" output has no view counts
             return [{"username": "MoneyMia", "fullName": "Mia", "followersCount": 8800,
-                     "latestPosts": [{**IG_ITEM, "videoPlayCount": None, "videoViewCount": None}]}]
-        if body["directUrls"] == ["https://www.instagram.com/moneymia/"]:
-            return [IG_ITEM, {**IG_ITEM, "type": "Image", "productType": "feed"}]
-        assert body["directUrls"] == ["https://www.instagram.com/explore/tags/personalfinance/"]
-        return [IG_ITEM]
+                     "latestPosts": [{**IG_ITEM, "videoPlayCount": None, "videoViewCount": None}]},
+                    {"username": "other", "followersCount": 10}]
+        return [IG_ITEM, {**IG_ITEM, "type": "Image", "productType": "feed"}]
 
     prov = InstagramScraperProvider("tok", ApifyClient("tok", mock_client(apify_mock(items_for, statuses=("SUCCEEDED",)))))
-    posts, _ = prov.search("personal finance", 3650, 10)
-    assert posts[0].views == 250_000 and seen[0]["resultsType"] == "reels"
+    assert not prov.can_search  # creator list only: no hashtag search
+    with pytest.raises(ProviderUnavailable):
+        prov.search("personal finance", 3650, 10)
     prof = prov.lookup_creator("@MoneyMia", 30)
     assert prof.creator.followers == 8800
     assert [p.views for p in prof.recent_posts] == [250_000]  # plays come from "reels" mode
     assert seen[-1] == {"directUrls": ["https://www.instagram.com/moneymia/"], "resultsType": "reels",
                         "resultsLimit": 30}
+    seen.clear()
+    profs = prov.lookup_creators(["@MoneyMia", "https://www.instagram.com/other/"], 6)
+    assert len(seen) == 2  # one "details" run + one "reels" run for every creator
+    assert seen[1]["directUrls"] == ["https://www.instagram.com/moneymia/", "https://www.instagram.com/other/"]
+    assert len(profs) == 2
 
 
 def test_instagram_official_business_discovery():

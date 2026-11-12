@@ -14,6 +14,7 @@
       {% if v.engagement_rate is not none %}<span title="Engagement rate: (likes + comments + shares + saves) ÷ views">💬 {{ v.engagement_rate }}%</span>{% endif %}
       {% if v.views_per_day %}<span title="Views per day">⚡ {{ v.views_per_day|num }}/d</span>{% endif %}
     </div>
-    {% if v.keywords %}<div class="tags">{% for k in v.keywords.split(',') if k %}<span>{{ k }}</span>{% endfor %}</div>{% endif %}
+    {% if v.keywords %}<div class="tags">{% for k in v.keywords.split(',') if k %}<span>{{ k }}</span>{% endfor %}</div>
+    {% elif v.source == 'creator' %}<div class="tags"><span class="src-creator" title="Found in the creator's own posts, not a keyword search">{{ 'tracked creator' if v.tracked else "creator's posts" }}</span></div>{% endif %}
   </div>
 </a>

@@ -1,48 +1,62 @@
 {% extends "base.html" %}
+{% from "_multiselect.html" import multiselect %}
 {% block head %}{% if running %}<meta http-equiv="refresh" content="4">{% endif %}{% endblock %}
 {% block content %}
-<h1>Tracked creators</h1>
-<p class="lead">Add creators in your niche from any platform. The app pulls their recent posts, scores each one against
-  the creator's own median, and takes a follower snapshot on every refresh. With snapshots from before and after a
-  post, it can <strong>estimate followers gained per video</strong>. Refresh daily (or schedule it, see the README) to build that history.</p>
+<h1>Creators</h1>
+<p class="lead">Your creator list is what scans check. Each scan pulls tracked creators' newest posts, scores them against
+  the creator's own median, and takes a follower snapshot. With snapshots from before and after a post, the app can
+  <strong>estimate followers gained per video</strong>. Give each creator a genre so genre scans and filters include them.</p>
 
 {% if error %}<p class="error">{{ error }}</p>{% endif %}
-<form class="filters" method="post" action="/creators">
-  <label>Platform
-    <select name="platform">{% for s in sources if s.provider %}<option value="{{ s.platform }}">{{ PLATFORM_LABELS[s.platform] }}</option>{% endfor %}</select>
+<form method="post" action="/creators" class="add-creators">
+  <label class="grow">Handles or profile URLs <small class="muted">one per line; URLs pick their own platform</small>
+    <textarea name="handles" rows="4" placeholder="@creator&#10;https://www.tiktok.com/@another&#10;https://www.instagram.com/someone/" required></textarea>
   </label>
-  <label class="grow">Handle or profile URL
-    <input type="text" name="handle" placeholder="@creator or https://www.tiktok.com/@creator" required>
-  </label>
-  <button class="primary" type="submit" {% if running %}disabled{% endif %}>Add creator</button>
-</form>
-<form method="post" action="/creators/refresh" class="inline">
-  <button type="submit" {% if running or not creators %}disabled{% endif %}>↻ Refresh all tracked creators</button>
+  <div class="add-side">
+    <label>Platform for bare handles
+      <select name="platform">{% for s in sources if s.provider %}<option value="{{ s.platform }}">{{ PLATFORM_LABELS[s.platform] }}</option>{% endfor %}</select>
+    </label>
+    <label>Genre
+      <select name="genre"><option value="">(none)</option>{% for g in genres %}<option value="{{ g }}">{{ g|replace('_',' ') }}</option>{% endfor %}</select>
+    </label>
+    <button class="primary" type="submit" {% if running %}disabled{% endif %}>Add creators</button>
+    <small class="muted">One lookup per platform: about {{ cfg.apify.baseline_posts }} posts per creator on TikTok/Instagram
+      (≈${{ '%.2f'|format(cfg.apify.baseline_posts * 0.0037) }} each).</small>
+  </div>
 </form>
 {% if running %}<p class="note">⏳ Working… <a href="/scans">see progress</a>. This page refreshes itself.</p>{% endif %}
 
-<form class="filters" method="get">
-  <label>Platform
-    <select name="platform" onchange="this.form.submit()">
-      <option value="">All platforms</option>
-      {% for p in PLATFORMS %}<option value="{{ p }}" {% if p == platform %}selected{% endif %}>{{ PLATFORM_LABELS[p] }}</option>{% endfor %}
-    </select>
-  </label>
+<form class="filters" method="get" data-autosubmit>
+  {{ multiselect('Platform', 'platform', PLATFORMS|map('pair', PLATFORM_LABELS)|list, platform, 'All platforms') }}
+  {{ multiselect('Genre', 'genre', genres|map('pair')|list, genre, 'All genres') }}
+  <noscript><button type="submit">Apply</button></noscript>
 </form>
 
+<h2>Tracked ({{ creators|length }})</h2>
 {% if not creators %}
-  <div class="empty"><p>No tracked creators yet. Add one above, or open any outlier and click “Track creator”.</p></div>
+  <div class="empty"><p>No tracked creators{% if platform or genre %} match these filters{% endif %}.
+    Add some above, or track suggestions below.</p></div>
 {% else %}
+<form method="post" action="/creators/refresh" class="inline">
+  <button type="submit" {% if running %}disabled{% endif %}>↻ Check all tracked creators now</button>
+  <small class="muted">Skips creators checked in the last {{ cfg.apify.refresh_hours }} hours.</small>
+</form>
 <div class="table-wrap">
 <table>
-  <thead><tr><th>Creator</th><th>Platform</th><th class="r">Followers</th><th class="r">30-day growth</th>
+  <thead><tr><th>Creator</th><th>Platform</th><th>Genre</th><th class="r">Followers</th><th class="r">30-day growth</th>
     <th class="r">Median views</th><th class="r">Outliers (≥{{ cfg.settings.min_outlier_score }}×)</th><th class="r">Best</th>
-    <th class="r">Snapshots</th><th>Updated</th></tr></thead>
+    <th class="r">Snapshots</th><th>Checked</th></tr></thead>
   <tbody>
   {% for c in creators %}
     <tr>
       <td><a href="/creator/{{ c.id }}"><strong>{{ c.title or c.handle }}</strong></a>{% if c.handle %}<br><small class="muted">{{ c.handle }}</small>{% endif %}</td>
       <td>{{ PLATFORM_LABELS[c.platform] }}</td>
+      <td><form method="post" action="/creator/{{ c.id }}/genre" class="inline-genre">
+        <input type="hidden" name="back" value="/creators">
+        <select name="genre" onchange="this.form.submit()" aria-label="Genre for {{ c.handle or c.title }}">
+          <option value="">(none)</option>
+          {% for g in genres %}<option value="{{ g }}" {% if g == c.genre %}selected{% endif %}>{{ g|replace('_',' ') }}</option>{% endfor %}
+        </select><noscript><button type="submit">Set</button></noscript></form></td>
       <td class="r">{{ c.followers|num }}</td>
       <td class="r">{{ ('+' ~ (c.growth_30d|num)) if c.growth_30d and c.growth_30d > 0 else (c.growth_30d|num) }}</td>
       <td class="r">{{ c.median_views_short|num }}</td>
@@ -55,5 +69,40 @@
   </tbody>
 </table>
 </div>
+{% endif %}
+
+{% if suggestions %}
+<h2>Suggested from earlier scans ({{ suggestions|length }})</h2>
+<p class="note">Creators already in your database, not tracked yet, with at least one qualifying outlier. Tracking them is
+  free: their posts and medians are already stored. Later scans will check them.</p>
+<form method="post" action="/creators/track">
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th><input type="checkbox" aria-label="Select all" onclick="this.closest('form').querySelectorAll('input[name=channel_id]').forEach(i => i.checked = this.checked)"></th>
+      <th>Creator</th><th>Platform</th><th>Genre</th><th class="r">Followers</th><th class="r">Median views</th>
+      <th class="r">Outliers</th><th class="r">Best</th></tr></thead>
+    <tbody>
+    {% for c in suggestions %}
+      <tr>
+        <td><input type="checkbox" name="channel_id" value="{{ c.id }}" aria-label="Track {{ c.handle or c.title }}"></td>
+        <td><a href="/creator/{{ c.id }}"><strong>{{ c.title or c.handle }}</strong></a>{% if c.handle %}<br><small class="muted">{{ c.handle }}</small>{% endif %}</td>
+        <td>{{ PLATFORM_LABELS[c.platform] }}</td>
+        <td>{{ (c.genre or '–')|replace('_',' ') }}</td>
+        <td class="r">{{ c.followers|num }}</td>
+        <td class="r">{{ c.median|num }}</td>
+        <td class="r">{{ c.outliers }}</td>
+        <td class="r">{{ c.best }}×</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  <div class="track-bar">
+    <label>Genre for creators without one
+      <select name="genre"><option value="">(leave empty)</option>{% for g in genres %}<option value="{{ g }}">{{ g|replace('_',' ') }}</option>{% endfor %}</select>
+    </label>
+    <button class="primary" type="submit">Track selected</button>
+  </div>
+</form>
 {% endif %}
 {% endblock %}

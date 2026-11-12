@@ -16,7 +16,7 @@ from app.transcribe import FakeTranscriber
 
 @pytest.fixture()
 def scanned(cfg):
-    run_scan(cfg, start_scan(cfg, "ai"), ["ai"], ["tiktok"], {"tiktok": FakeProvider("tiktok")})
+    run_scan(cfg, start_scan(cfg, "ai"), ["ai"], ["tiktok"], {"tiktok": FakeProvider("tiktok")}, wide=True)
     return cfg
 
 

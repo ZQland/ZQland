@@ -5,11 +5,13 @@ import shutil
 import threading
 import uuid
 from pathlib import Path
+from typing import Annotated
 
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from pydantic import BeforeValidator
 
 from . import pipeline, queries
 from .analyzer import SCORE_CRITERIA
@@ -17,7 +19,9 @@ from .config import load_config
 from .db import init_db
 from .models import PLATFORM_LABELS, PLATFORMS, split_id
 from .providers import all_sources, source_for
-from .scanner import _finish, add_creator, refresh_creators, run_scan, start_scan
+from .budget import month_summary
+from .scanner import (add_creators, cancel_scan, refresh_creators, run_scan, set_wide_scan, start_scan,
+                      wide_scan_enabled)
 
 HERE = Path(__file__).resolve().parent
 cfg = load_config()
@@ -26,6 +30,19 @@ init_db(cfg.db_path)
 app = FastAPI(title="Outlier Finder")
 app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
 templates = Jinja2Templates(directory=HERE / "templates")
+
+# HTML forms submit empty number inputs as "" (e.g. ?min_outlier=&max_subs=); treat that as unset.
+_blank_to_zero = BeforeValidator(lambda v: 0 if isinstance(v, str) and not v.strip() else v)
+OptFloat = Annotated[float, _blank_to_zero]
+OptInt = Annotated[int, _blank_to_zero]
+# Multi-select filters arrive as repeated params (?platform=tiktok&platform=instagram).
+# Old single-value links (?platform=) still work: blanks are dropped.
+_drop_blanks = BeforeValidator(lambda v: [x for x in (v or []) if x and str(x).strip()])
+Multi = Annotated[list[str], Query(), _drop_blanks]
+
+
+def _keywords_for(genres: list[str]) -> list[str]:
+    return [k for g in genres for k in cfg.genres.get(g, [])]
 
 
 def _fmt(n) -> str:
@@ -45,6 +62,8 @@ def _mmss(s) -> str:
 
 templates.env.filters["num"] = _fmt
 templates.env.filters["mmss"] = _mmss
+# (value, label, group) tuples for the multiselect macro; labels default to the value with spaces.
+templates.env.filters["pair"] = lambda v, labels=None: (v, (labels or {}).get(v, v.replace("_", " ")), None)
 templates.env.globals.update(PLATFORM_LABELS=PLATFORM_LABELS, PLATFORMS=PLATFORMS,
                              SCORE_CRITERIA=SCORE_CRITERIA, split_id=split_id)
 
@@ -78,19 +97,21 @@ def _sparkline(history: list[tuple[str, int]], w: int = 600, h: int = 120) -> di
 # --- pages ------------------------------------------------------------------
 
 @app.get("/", response_class=HTMLResponse)
-def feed(request: Request, platform: str = "", genre: str = "", keyword: str = "", sort: str = "outlier",
-         min_outlier: float = 0, max_subs: int = 0):
-    videos = queries.list_outliers(cfg, genre or None, keyword or None, min_outlier or None,
-                                   max_subs or None, sort, platform=platform or None)
+def feed(request: Request, platform: Multi = [], genre: Multi = [], keyword: Multi = [], sort: str = "outlier",
+         min_outlier: OptFloat = 0, max_subs: OptInt = 0):
+    # Keywords only make sense inside the chosen genres; drop ones left over from a deselected genre.
+    keyword = [k for k in keyword if not genre or k in _keywords_for(genre)]
+    videos = queries.list_outliers(cfg, genre, keyword, min_outlier or None,
+                                   max_subs or None, sort, platform=platform)
     return templates.TemplateResponse(request, "index.html", _ctx(
-        request, videos=videos, platform=platform, genre=genre, keyword=keyword,
-        keywords=cfg.genres.get(genre, []) if genre else [], sort=sort,
+        request, videos=videos, platform=platform, genre=genre, keyword=keyword, sort=sort,
+        keyword_options=[(k, k, g) for g, ks in cfg.genres.items() for k in ks],
         min_outlier=min_outlier, max_subs=max_subs, running=_running()))
 
 
 @app.get("/opportunities", response_class=HTMLResponse)
-def opportunities(request: Request, genre: str = "", platform: str = ""):
-    rows = queries.keyword_opportunities(cfg, genre or None, platform or None)
+def opportunities(request: Request, genre: Multi = [], platform: Multi = []):
+    rows = queries.keyword_opportunities(cfg, genre, platform)
     return templates.TemplateResponse(request, "opportunities.html",
                                       _ctx(request, rows=rows, genre=genre, platform=platform))
 
@@ -142,30 +163,51 @@ def frame(name: str, v: str):
 
 
 @app.get("/creators", response_class=HTMLResponse)
-def creators(request: Request, platform: str = "", error: str = ""):
+def creators(request: Request, platform: Multi = [], genre: Multi = [], error: str = ""):
     return templates.TemplateResponse(request, "creators.html", _ctx(
-        request, creators=queries.list_creators(cfg, platform or None), platform=platform,
-        error=error, running=_running()))
-
-
-def _add_creator_job(scan_id: int, platform: str, handle: str) -> None:
-    try:
-        cid = add_creator(cfg, platform, handle)
-        _finish(cfg, scan_id, "finished", 0, f"Added {cid}.")
-    except Exception as e:
-        _finish(cfg, scan_id, "failed", 0, f"{type(e).__name__}: {e}")
+        request, creators=queries.list_creators(cfg, platform, genre=genre),
+        suggestions=queries.suggested_creators(cfg, platform, genre),
+        platform=platform, genre=genre, error=error, running=_running()))
 
 
 @app.post("/creators")
-def create_creator(platform: str = Form(...), handle: str = Form(...)):
-    handle = handle.strip()
-    if platform not in PLATFORMS or not handle:
-        return RedirectResponse("/creators?error=Pick+a+platform+and+enter+a+handle+or+URL", status_code=303)
-    if source_for(cfg, platform).provider is None:
-        return RedirectResponse(f"/creators?error={platform}+has+no+data+source", status_code=303)
-    scan_id = start_scan(cfg, f"add {platform} creator {handle}")
-    _bg(_add_creator_job, scan_id, platform, handle)
+def create_creators(platform: str = Form(...), handles: str = Form(""), handle: str = Form(""), genre: str = Form("")):
+    """Track one or many creators: one handle or profile URL per line (or comma-separated)."""
+    entries = [e.strip() for e in (handles or handle).replace(",", "\n").splitlines() if e.strip()]
+    if platform not in PLATFORMS or not entries:
+        return RedirectResponse("/creators?error=Pick+a+platform+and+enter+at+least+one+handle+or+URL", status_code=303)
+    if genre and genre not in cfg.genres:
+        raise HTTPException(400, "Unknown genre")
+    if _running():
+        return RedirectResponse("/creators?error=Wait+for+the+running+job+to+finish", status_code=303)
+    scan_id = start_scan(cfg, f"add {len(entries)} creator{'s' if len(entries) > 1 else ''}"
+                              f"{' to ' + genre if genre else ''}")
+    _bg(add_creators, cfg, scan_id, entries, platform, genre or None)
     return RedirectResponse("/creators", status_code=303)
+
+
+@app.post("/creators/track")
+def track_many(channel_id: Annotated[list[str], Form()] = [], genre: str = Form("")):
+    """Track suggested creators. Free: their posts and medians are already stored."""
+    from .db import connect
+    if channel_id:
+        with connect(cfg.db_path) as conn:
+            marks = ",".join("?" * len(channel_id))
+            conn.execute(f"UPDATE channels SET tracked = 1 WHERE id IN ({marks})", channel_id)
+            if genre in cfg.genres:
+                conn.execute(f"UPDATE channels SET genre = ? WHERE id IN ({marks}) AND genre IS NULL",
+                             [genre, *channel_id])
+    return RedirectResponse("/creators", status_code=303)
+
+
+@app.post("/creator/{channel_id:path}/genre")
+def set_genre(channel_id: str, genre: str = Form(""), back: str = Form("")):
+    from .db import connect
+    if genre and genre not in cfg.genres:
+        raise HTTPException(400, "Unknown genre")
+    with connect(cfg.db_path) as conn:
+        conn.execute("UPDATE channels SET genre = ? WHERE id = ?", (genre or None, channel_id))
+    return RedirectResponse(back if back.startswith("/") else f"/creator/{channel_id}", status_code=303)
 
 
 @app.post("/creators/refresh")
@@ -197,40 +239,53 @@ def track(channel_id: str, tracked: int = Form(1)):
 
 @app.get("/scans", response_class=HTMLResponse)
 def scans(request: Request):
-    per_kw = {"youtube": "~100 units", "tiktok": f"~{cfg.settings.results_per_keyword} results",
-              "instagram": f"~{cfg.settings.results_per_keyword} results"}
     return templates.TemplateResponse(request, "scans.html", _ctx(
-        request, scans=queries.recent_scans(cfg), per_kw=per_kw, running=_running()))
+        request, scans=queries.recent_scans(cfg), running=_running(), wide=wide_scan_enabled(cfg),
+        apify=month_summary(cfg) if cfg.apify_token else None, counts=queries.tracked_counts(cfg)))
+
+
+@app.post("/scans/{scan_id}/cancel")
+def cancel(scan_id: int):
+    cancel_scan(cfg, scan_id)
+    return RedirectResponse("/scans", status_code=303)
+
+
+@app.post("/settings/wide-scan")
+def toggle_wide_scan(on: str = Form("0")):
+    set_wide_scan(cfg, on == "1")
+    return RedirectResponse("/scans", status_code=303)
 
 
 @app.post("/scans")
 async def create_scan(request: Request):
     form = await request.form()
     target = form.get("target", "all")
-    genres = list(cfg.genres) if target == "all" else [target]
-    if any(g not in cfg.genres for g in genres):
+    if target != "all" and target not in cfg.genres:
         raise HTTPException(400, "Unknown genre")
+    genres = None if target == "all" else [target]  # all = every tracked creator, with or without a genre
     platforms = [p for p in form.getlist("platforms") if p in PLATFORMS] or \
-        [s.platform for s in all_sources(cfg) if s.provider is not None and s.provider.can_search]
+        [s.platform for s in all_sources(cfg) if s.provider is not None]
     if not _running():
+        wide = wide_scan_enabled(cfg)
         demo = [p for p in platforms if source_for(cfg, p).demo]
-        label = f"{target} on {', '.join(platforms)}" + (f" (demo: {', '.join(demo)})" if demo else "")
-        _bg(run_scan, cfg, start_scan(cfg, label), genres, platforms)
+        label = (f"{'wide' if wide else 'creators'} · {target} on {', '.join(platforms)}"
+                 + (f" (demo: {', '.join(demo)})" if demo else ""))
+        _bg(run_scan, cfg, start_scan(cfg, label), genres, platforms, None, wide)
     return RedirectResponse("/scans", status_code=303)
 
 
 # --- JSON API ----------------------------------------------------------------
 
 @app.get("/api/outliers")
-def api_outliers(platform: str = "", genre: str = "", keyword: str = "", sort: str = "outlier",
-                 min_outlier: float = 0, max_subs: int = 0, limit: int = 100):
-    return JSONResponse(queries.list_outliers(cfg, genre or None, keyword or None, min_outlier or None,
-                                              max_subs or None, sort, limit=limit, platform=platform or None))
+def api_outliers(platform: Multi = [], genre: Multi = [], keyword: Multi = [], sort: str = "outlier",
+                 min_outlier: OptFloat = 0, max_subs: OptInt = 0, limit: int = 100):
+    return JSONResponse(queries.list_outliers(cfg, genre, keyword, min_outlier or None,
+                                              max_subs or None, sort, limit=limit, platform=platform))
 
 
 @app.get("/api/opportunities")
-def api_opportunities(genre: str = "", platform: str = ""):
-    return JSONResponse(queries.keyword_opportunities(cfg, genre or None, platform or None))
+def api_opportunities(genre: Multi = [], platform: Multi = []):
+    return JSONResponse(queries.keyword_opportunities(cfg, genre, platform))
 
 
 @app.get("/api/analysis/{video_id:path}")

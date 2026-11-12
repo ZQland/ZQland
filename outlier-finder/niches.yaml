@@ -8,12 +8,22 @@
 #   scraper  = Apify third-party scraper (TikTok, Instagram). Breaks those platforms'
 #              terms of service: OK for personal research, risky in a product you sell.
 #   off      = skip this platform
-# Official Instagram has no keyword search: it only works for creators you add on the
-# Creators page. TikTok has no official option for other creators' videos.
+# Scans check your creator list (Creators page). Keyword search ("wide scan", a switch on the
+# Scans page) runs on YouTube and TikTok only; Instagram is creator list only in both modes.
+# TikTok has no official option for other creators' videos.
 platforms:
   youtube: official
   tiktok: scraper
   instagram: scraper
+
+# Apify spending guards (TikTok + Instagram scrapers bill per post fetched, ~$0.003-0.004 each).
+apify:
+  monthly_budget_usd: 5.0    # stop starting Apify runs once this month's usage reaches this
+  max_usd_per_scan: 1.0      # one scan never spends more than this (Apify enforces it), split across platforms
+  baseline_posts: 15         # posts fetched the first time a creator is looked up (for their median)
+  refresh_posts: 6           # newest posts fetched on later scans; the median uses stored history
+  refresh_hours: 20          # don't re-check a creator more often than this
+  new_creators_per_scan: 15  # wide scan only: new creators looked up per platform per scan
 
 analysis:
   model: claude-opus-5-5     # Claude model for script/format breakdowns
