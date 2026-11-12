@@ -50,8 +50,9 @@ templates.env.globals.update(PLATFORM_LABELS=PLATFORM_LABELS, PLATFORMS=PLATFORM
 
 
 def _ctx(request: Request, **kw) -> dict:
+    from .config import env_path
     return {"request": request, "cfg": cfg, "genres": list(cfg.genres), "sources": all_sources(cfg),
-            "summary": queries.summary(cfg), **kw}
+            "summary": queries.summary(cfg), "env_path": env_path(), "env_exists": env_path().exists(), **kw}
 
 
 def _running() -> bool:

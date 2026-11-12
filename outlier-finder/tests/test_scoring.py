@@ -91,3 +91,15 @@ def test_language_matches_and_hidden_engagement():
     assert not scoring.language_matches(None, "en", "15 दिनों में तेजी से वजन घटाएं! 🔥 9 Easy Tips")
     assert scoring.language_matches(None, "en", "4 Belly Fat Exercises 🔥 #shorts")
     assert scoring.engagement_rate(1000, None, 0, 5, 5) is None
+
+
+def test_dotenv_tolerates_common_mistakes(tmp_path, monkeypatch):
+    from app.config import _load_dotenv
+    env = tmp_path / ".env"
+    env.write_text('﻿YOUTUBE_API_KEY = "abc123"\nexport APIFY_TOKEN=tok\n# comment\nEMPTY=\n', encoding="utf-8")
+    monkeypatch.setenv("APIFY_TOKEN", "")          # empty in the terminal shouldn't block .env
+    monkeypatch.delenv("YOUTUBE_API_KEY", raising=False)
+    monkeypatch.delenv("EMPTY", raising=False)
+    assert sorted(_load_dotenv(env)) == ["APIFY_TOKEN", "YOUTUBE_API_KEY"]
+    import os
+    assert os.environ["YOUTUBE_API_KEY"] == "abc123" and os.environ["APIFY_TOKEN"] == "tok"

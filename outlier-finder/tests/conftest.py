@@ -11,6 +11,7 @@ def cfg(tmp_path, monkeypatch):
                 "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"):
         monkeypatch.setenv(key, "")
     monkeypatch.setenv("OUTLIER_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("OUTLIER_ENV_FILE", str(tmp_path / "no.env"))  # never read the real .env
     monkeypatch.setenv("ANTHROPIC_CONFIG_DIR", str(tmp_path / "no-ant-profile"))  # ignore real `ant` logins
     monkeypatch.delenv("OUTLIER_DB", raising=False)
     reset_cache()

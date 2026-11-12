@@ -10,16 +10,31 @@ import yaml
 ROOT = Path(__file__).resolve().parent.parent
 
 
-def _load_dotenv(path: Path) -> None:
-    """Minimal .env loader so the app runs without extra dependencies."""
+def env_path() -> Path:
+    """Where keys are read from: outlier-finder/.env, or OUTLIER_ENV_FILE if set."""
+    return Path(os.environ.get("OUTLIER_ENV_FILE") or ROOT / ".env")
+
+
+def _load_dotenv(path: Path) -> list[str]:
+    """Minimal .env loader so the app runs without extra dependencies. Returns the keys it set.
+
+    Tolerates the usual hand-edited mistakes: a Windows byte-order mark, `export KEY=…`,
+    spaces around `=`, and quotes. A variable already set in the shell wins, unless it's empty.
+    """
     if not path.exists():
-        return
-    for line in path.read_text().splitlines():
+        return []
+    loaded = []
+    for line in path.read_text(encoding="utf-8-sig").splitlines():
         line = line.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, value = line.split("=", 1)
-        os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+        key = key.strip().removeprefix("export ").strip()
+        value = value.strip().strip('"').strip("'")
+        if value and not os.environ.get(key):
+            os.environ[key] = value
+            loaded.append(key)
+    return loaded
 
 
 @dataclass
@@ -81,7 +96,7 @@ def _pick(cls, raw: dict, renames: dict[str, str] | None = None):
 
 
 def load_config(niches_path: Path | None = None) -> Config:
-    _load_dotenv(ROOT / ".env")
+    _load_dotenv(env_path())
     raw = yaml.safe_load((niches_path or ROOT / "niches.yaml").read_text()) or {}
     settings = _pick(Settings, raw.get("settings"),
                      {"max_subscribers": "max_followers", "min_subscribers": "min_followers"})

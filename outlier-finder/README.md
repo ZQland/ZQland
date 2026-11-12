@@ -35,6 +35,23 @@ With no keys, every platform runs on **demo data** and analyses use a demo analy
 
 **Check the scraper fields on your first real run.** Apify actors change their output over time, and I couldn't test against live Apify from the build environment. If numbers come back empty, compare one item from the actor's output in the Apify console with the getters in `app/providers/apify.py`.
 
+## Still says "demo data"?
+
+Run the doctor from the `outlier-finder` folder:
+
+```bash
+python -m app.cli doctor
+```
+
+It shows where the app looks for `.env`, which keys it found (masked), whether each one works (a free or 1-unit live call), and whether ffmpeg and Whisper are ready. The usual causes:
+
+1. **The server was running when you edited `.env`.** `--reload` doesn't watch `.env`. Stop it (Ctrl+C) and start it again.
+2. **`.env` is in the wrong place.** It belongs in `outlier-finder/`, next to `niches.yaml`.
+3. **Windows saved it as `.env.txt`.** Rename it to `.env` (in File Explorer, turn on View → File name extensions).
+4. **Keys pasted into `.env.example`** instead of `.env`.
+
+Claude can also use `ant auth login` instead of `ANTHROPIC_API_KEY`.
+
 ## What it measures
 
 | Metric | How |

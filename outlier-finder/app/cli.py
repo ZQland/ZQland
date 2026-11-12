@@ -1,5 +1,6 @@
 """Command line for scheduled jobs.
 
+    python -m app.cli doctor                  # why does it say "demo data"? checks keys, .env, tools
     python -m app.cli refresh                 # refresh tracked creators (daily follower snapshots)
     python -m app.cli scan --genre fitness    # scan one genre on all searchable platforms
     python -m app.cli scan --genre all --platform tiktok
@@ -23,11 +24,16 @@ from .scanner import refresh_creators, run_scan, start_scan
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m app.cli")
     sub = parser.add_subparsers(dest="cmd", required=True)
+    sub.add_parser("doctor", help="check .env, keys, data sources and tools")
     sub.add_parser("refresh", help="refresh tracked creators and take follower snapshots")
     scan = sub.add_parser("scan", help="scan keywords for outliers")
     scan.add_argument("--genre", default="all")
     scan.add_argument("--platform", action="append", choices=PLATFORMS)
     args = parser.parse_args(argv)
+    if args.cmd == "doctor":
+        from .doctor import run
+        print(run())
+        return 0
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     logging.getLogger("httpx").setLevel(logging.WARNING)  # one line per HTTP call is too noisy

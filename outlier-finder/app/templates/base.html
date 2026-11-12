@@ -30,6 +30,11 @@
       Claude: {{ cfg.analysis.model if cfg.anthropic_ready else 'demo analyses' }}
     </span>
   </div>
+  {% if sources|selectattr('demo')|list or not cfg.anthropic_ready %}
+  <div class="banner">Some sources use <strong>demo data</strong> because their key is missing.
+    Keys are read from <code>{{ env_path }}</code> ({{ 'found' if env_exists else 'not found' }}) when the server starts.
+    After editing it, restart the server. To see what's wrong, run <code>python -m app.cli doctor</code>.</div>
+  {% endif %}
   <main>{% block content %}{% endblock %}</main>
 </body>
 </html>
