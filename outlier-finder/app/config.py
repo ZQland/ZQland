@@ -65,6 +65,12 @@ class Config:
         return self.youtube_api_key
 
 
+def _ant_profile_exists() -> bool:
+    """True after `ant auth login`: the Anthropic SDK then signs requests with that profile."""
+    base = Path(os.environ.get("ANTHROPIC_CONFIG_DIR") or Path.home() / ".config" / "anthropic")
+    return any((base / "credentials").glob("*.json")) if (base / "credentials").exists() else False
+
+
 def _pick(cls, raw: dict, renames: dict[str, str] | None = None):
     raw = dict(raw or {})
     for old, new in (renames or {}).items():
@@ -92,7 +98,7 @@ def load_config(niches_path: Path | None = None) -> Config:
         apify_token=env("APIFY_TOKEN") or None,
         ig_access_token=env("IG_ACCESS_TOKEN") or None,
         ig_user_id=env("IG_USER_ID") or None,
-        anthropic_ready=bool(env("ANTHROPIC_API_KEY") or env("ANTHROPIC_AUTH_TOKEN")),
+        anthropic_ready=bool(env("ANTHROPIC_API_KEY") or env("ANTHROPIC_AUTH_TOKEN") or _ant_profile_exists()),
         db_path=Path(env("OUTLIER_DB", data_dir / "outliers.db")),
         media_dir=data_dir / "media",
     )
