@@ -1,6 +1,8 @@
 """Speech-to-text with word timestamps (local faster-whisper), plus script metrics."""
 from __future__ import annotations
 
+import os
+import wave
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -42,6 +44,19 @@ class Transcript:
         return "\n".join(f"[{s.start:05.1f}–{s.end:05.1f}] {s.text.strip()}" for s in self.segments)
 
 
+def read_wav_16k(path: Path):
+    """Read the 16 kHz mono 16-bit WAV that media.extract_audio writes, as float32 samples.
+
+    Passing samples (not a file path) means faster-whisper skips its own PyAV decoding,
+    which breaks when PyAV and faster-whisper versions drift apart."""
+    import numpy as np
+    with wave.open(str(path), "rb") as w:
+        if w.getframerate() != 16000 or w.getnchannels() != 1 or w.getsampwidth() != 2:
+            raise RuntimeError("Expected 16 kHz mono 16-bit WAV (use media.extract_audio).")
+        data = w.readframes(w.getnframes())
+    return np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.0
+
+
 class WhisperTranscriber:
     """faster-whisper on your own machine. The model downloads once on first use
     (from Hugging Face), then runs offline. Bigger models are more accurate but slower."""
@@ -52,6 +67,9 @@ class WhisperTranscriber:
 
     def _load(self):
         if self._model is None:
+            # Plain HTTPS downloads instead of Hugging Face's Xet protocol, which needs extra
+            # hosts (cas-server.xethub.hf.co …) that locked-down networks often block.
+            os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
             try:
                 from faster_whisper import WhisperModel
             except ImportError as e:
@@ -64,11 +82,11 @@ class WhisperTranscriber:
         return self._model
 
     def transcribe(self, audio_path: Path) -> Transcript:
-        segments, info = self._load().transcribe(str(audio_path), word_timestamps=True, vad_filter=True)
+        segments, info = self._load().transcribe(read_wav_16k(audio_path), word_timestamps=True, vad_filter=True)
         out = []
         for s in segments:
-            words = [Word(round(w.start, 2), round(w.end, 2), w.word) for w in (s.words or [])]
-            out.append(Segment(round(s.start, 2), round(s.end, 2), s.text, words))
+            words = [Word(round(float(w.start), 2), round(float(w.end), 2), w.word) for w in (s.words or [])]
+            out.append(Segment(round(float(s.start), 2), round(float(s.end), 2), s.text, words))
         return Transcript(getattr(info, "language", None), out)
 
 
