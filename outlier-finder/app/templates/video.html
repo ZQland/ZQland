@@ -26,7 +26,7 @@
     </p>
     <div class="metrics">
       <div><span>{{ v.outlier_score ~ '×' if v.outlier_score else '–' }}</span>outlier score
-        <small>{% if v.channel_median %}{{ v.views|num }} vs. median {{ v.channel_median|num }} ({{ v.sample_size }} recent posts){% else %}creator's median unknown{% endif %}</small></div>
+        <small>{% if v.channel_median %}{{ v.views|num }} vs. median {{ v.channel_median|num }} ({{ v.sample_size }} recent posts){% elif v.sample_size is not none %}baseline too thin: only {{ v.sample_size }} posts older than 3 days{% else %}creator's median unknown{% endif %}</small></div>
       <div><span>{{ v.views|num }}</span>views</div>
       <div><span>{{ v.engagement_rate ~ '%' if v.engagement_rate is not none else '–' }}</span>engagement rate<small>(likes + comments + shares + saves) ÷ views</small></div>
       <div><span>{{ v.likes|num }}</span>likes</div>

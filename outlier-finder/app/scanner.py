@@ -14,7 +14,8 @@ from .providers.youtube import QuotaExceeded
 
 log = logging.getLogger(__name__)
 
-MIN_AGE_FOR_MEDIAN_DAYS = 2   # very fresh uploads are still growing; skip them
+MIN_AGE_FOR_MEDIAN_DAYS = 3   # fresh uploads are still growing; leave them out of the baseline
+MIN_POSTS_FOR_MEDIAN = 5      # fewer settled posts than this = baseline too thin to score against
 SNAPSHOT_MIN_GAP_HOURS = 6    # don't store follower snapshots more often than this
 
 
@@ -52,7 +53,8 @@ def _medians(platform: str, posts: list[Post]) -> tuple[float | None, float | No
                and scoring.age_days(p.published_at) >= MIN_AGE_FOR_MEDIAN_DAYS]
     short = [p.views for p in settled if scoring.bucket(platform, p.duration_s) == "short"]
     long_ = [p.views for p in settled if scoring.bucket(platform, p.duration_s) == "long"]
-    return scoring.channel_median(short), scoring.channel_median(long_), len(settled)
+    return (scoring.channel_median(short, MIN_POSTS_FOR_MEDIAN),
+            scoring.channel_median(long_, MIN_POSTS_FOR_MEDIAN), len(settled))
 
 
 def add_snapshot(conn, channel_id: str, followers: int | None, taken_at: str | None = None) -> None:

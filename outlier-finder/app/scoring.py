@@ -37,10 +37,10 @@ def age_days(published_at: str, now: datetime | None = None) -> float:
     return max((now - parse_time(published_at)).total_seconds() / 86400, 0.0)
 
 
-def channel_median(view_counts: list[int]) -> float | None:
+def channel_median(view_counts: list[int], min_posts: int = 3) -> float | None:
     """Median views of a channel's recent uploads; None if too few to trust."""
     counts = [v for v in view_counts if v is not None]
-    if len(counts) < 3:
+    if len(counts) < min_posts:
         return None
     return float(median(counts))
 

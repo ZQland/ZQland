@@ -11,6 +11,7 @@ Apify console, compare its output with the getters below, and adjust them.
 from __future__ import annotations
 
 import re
+import time
 from datetime import datetime, timedelta, timezone
 
 import httpx
@@ -57,19 +58,44 @@ def _within(post: Post, lookback_days: int) -> bool:
 
 
 class ApifyClient:
+    """Starts an actor run, polls until it finishes, then reads its dataset.
+
+    (Apify's one-call "run-sync" endpoint holds a connection open for the whole run,
+    which proxies and gateways tend to cut off with a 502, so this polls instead.)
+    """
+
+    POLL_SECONDS = 20          # each status request waits up to this long on Apify's side
+    MAX_RUN_SECONDS = 15 * 60  # give up on a run after this long
+    _DONE = {"SUCCEEDED", "FAILED", "ABORTED", "TIMED-OUT"}
+
     def __init__(self, token: str, http: httpx.Client | None = None):
         self.token = token
-        self.http = http or httpx.Client(timeout=360)
-        self.results = 0  # Apify bills these actors per result
+        self.http = http or httpx.Client(timeout=60)
+        self.results = 0       # Apify bills these actors per result
+        self.cost_usd = 0.0    # as reported by Apify for finished runs
 
-    def run(self, actor: str, actor_input: dict) -> list[dict]:
-        """Run an actor synchronously and return its dataset items (waits up to ~5 min)."""
-        resp = self.http.post(f"{APIFY}/acts/{actor}/run-sync-get-dataset-items",
-                              json=actor_input, headers={"Authorization": f"Bearer {self.token}"})
+    def _call(self, method: str, path: str, **kw) -> httpx.Response:
+        resp = self.http.request(method, f"{APIFY}{path}",
+                                 headers={"Authorization": f"Bearer {self.token}"}, **kw)
         if resp.status_code in (401, 403):
             raise ProviderUnavailable("Apify rejected the token. Check APIFY_TOKEN.")
         resp.raise_for_status()
-        items = resp.json()
+        return resp
+
+    def run(self, actor: str, actor_input: dict) -> list[dict]:
+        run = self._call("POST", f"/acts/{actor}/runs", params={"waitForFinish": self.POLL_SECONDS},
+                         json=actor_input).json()["data"]
+        deadline = time.monotonic() + self.MAX_RUN_SECONDS
+        while run["status"] not in self._DONE:
+            if time.monotonic() > deadline:
+                raise ProviderUnavailable(f"Apify run {run['id']} took longer than 15 minutes.")
+            run = self._call("GET", f"/actor-runs/{run['id']}",
+                             params={"waitForFinish": self.POLL_SECONDS}).json()["data"]
+        self.cost_usd += float(run.get("usageTotalUsd") or 0)
+        if run["status"] != "SUCCEEDED":
+            raise ProviderUnavailable(f"Apify run {run['id']} ended with status {run['status']}.")
+        items = self._call("GET", f"/datasets/{run['defaultDatasetId']}/items",
+                           params={"clean": "true", "format": "json"}).json()
         items = [i for i in items if isinstance(i, dict) and not i.get("error")]
         self.results += len(items)
         return items
@@ -80,8 +106,8 @@ class ApifyClient:
 def tiktok_post(item: dict) -> Post | None:
     native = str(item.get("id") or "")
     username = dig(item, "authorMeta.name")
-    if not native or not username:
-        return None
+    if not native or not username or item.get("isAd") or item.get("isSponsored"):
+        return None  # skip paid posts: their views don't reflect organic reach
     return Post(
         id=make_id("tiktok", native), platform="tiktok",
         creator_id=make_id("tiktok", username.lower()),
@@ -208,19 +234,29 @@ class InstagramScraperProvider:
         return self.client.results
 
     def search(self, query: str, lookback_days: int, limit: int):
+        # "reels" mode: the default "posts" mode returns a hashtag's top posts, which are mostly photos.
         tag = re.sub(r"[^\w]", "", query.lower())  # Instagram hashtags are one word
         items = self.client.run(INSTAGRAM_ACTOR, {
             "directUrls": [f"https://www.instagram.com/explore/tags/{tag}/"],
-            "resultsType": "posts", "resultsLimit": limit})
+            "resultsType": "reels", "resultsLimit": limit})
         posts = [p for p in map(instagram_post, items) if p and _within(p, lookback_days)]
         return posts, None
 
-    def _details(self, usernames: list[str]) -> list[Profile]:
-        items = self.client.run(INSTAGRAM_ACTOR, {
-            "directUrls": [f"https://www.instagram.com/{u}/" for u in usernames],
-            "resultsType": "details", "resultsLimit": len(usernames)})
+    def _details(self, usernames: list[str], sample_size: int) -> list[Profile]:
+        """Follower counts come from "details"; play counts for recent Reels only come from
+        "reels" mode ("details" lists recent posts but without view or play counts)."""
+        urls = [f"https://www.instagram.com/{u}/" for u in usernames]
+        details = self.client.run(INSTAGRAM_ACTOR, {"directUrls": urls, "resultsType": "details",
+                                                    "resultsLimit": 1})
+        reels = self.client.run(INSTAGRAM_ACTOR, {"directUrls": urls, "resultsType": "reels",
+                                                  "resultsLimit": sample_size})
+        by_owner: dict[str, list[Post]] = {}
+        for item in reels:
+            p = instagram_post(item)
+            if p:
+                by_owner.setdefault(p.creator_id, []).append(p)
         out = []
-        for item in items:
+        for item in details:
             username = item.get("username")
             if not username:
                 continue
@@ -228,15 +264,14 @@ class InstagramScraperProvider:
                               handle=username, title=item.get("fullName") or username,
                               followers=_int(item.get("followersCount")),
                               url=f"https://www.instagram.com/{username}/")
-            recent = [p for p in (instagram_post(x, username) for x in item.get("latestPosts") or []) if p]
-            out.append(Profile(creator, recent))
+            out.append(Profile(creator, by_owner.get(creator.id, [])))
         return out
 
     def profiles(self, creator_ids, sample_size, follower_range=None):
-        return self._details([split_id(c)[1] for c in creator_ids])
+        return self._details([split_id(c)[1] for c in creator_ids], sample_size)
 
     def lookup_creator(self, handle_or_url: str, sample_size: int) -> Profile:
-        found = self._details([_ig_username(handle_or_url)])
+        found = self._details([_ig_username(handle_or_url)], sample_size)
         if not found:
             raise ProviderUnavailable(f"No Instagram account found for '{handle_or_url}'.")
         return found[0]

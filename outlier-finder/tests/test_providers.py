@@ -30,6 +30,28 @@ def mock_client(handler):
     return httpx.Client(transport=httpx.MockTransport(handler))
 
 
+def apify_mock(items_for, calls=None, statuses=("RUNNING", "SUCCEEDED")):
+    """Mimics Apify: POST /acts/{actor}/runs → poll /actor-runs/{id} → GET /datasets/{id}/items."""
+    state = {"body": None, "polls": list(statuses[1:])}
+
+    def handler(req: httpx.Request):
+        path = req.url.path
+        if req.method == "POST" and path.endswith("/runs"):
+            state["body"] = json.loads(req.content)
+            if calls is not None:
+                calls.append((path, req.headers.get("authorization"), state["body"]))
+            return httpx.Response(201, json={"data": {"id": "run1", "status": statuses[0],
+                                                       "defaultDatasetId": "ds1", "usageTotalUsd": 0.01}})
+        if path.startswith("/v2/actor-runs/"):
+            status = state["polls"].pop(0) if state["polls"] else "SUCCEEDED"
+            return httpx.Response(200, json={"data": {"id": "run1", "status": status,
+                                                       "defaultDatasetId": "ds1", "usageTotalUsd": 0.01}})
+        if path == "/v2/datasets/ds1/items":
+            return httpx.Response(200, json=items_for(state["body"]))
+        return httpx.Response(404)
+    return handler
+
+
 def test_dig_reads_nested_and_flat_keys():
     assert dig(TT_ITEM, "authorMeta.fans") == 12_000
     assert dig(TT_FLAT, "authorMeta.fans") == 77
@@ -55,17 +77,16 @@ def test_instagram_post_prefers_plays_and_skips_photos():
 
 def test_tiktok_scraper_requests():
     calls = []
-
-    def handler(req: httpx.Request):
-        calls.append((req.url.path, req.headers["authorization"], json.loads(req.content)))
-        return httpx.Response(200, json=[TT_ITEM, {"error": "blocked"}])
-
-    prov = TikTokScraperProvider("tok", ApifyClient("tok", mock_client(handler)))
+    client = ApifyClient("tok", mock_client(apify_mock(lambda body: [TT_ITEM, {"error": "blocked"},
+                                                                    {**TT_ITEM, "id": "9", "isAd": True}], calls)))
+    client.POLL_SECONDS = 0
+    prov = TikTokScraperProvider("tok", client)
     posts, supply = prov.search("fitfam", lookback_days=3650, limit=20)
     path, auth, body = calls[0]
-    assert path == "/v2/acts/clockworks~tiktok-scraper/run-sync-get-dataset-items"
+    assert path == "/v2/acts/clockworks~tiktok-scraper/runs"
     assert auth == "Bearer tok" and body["hashtags"] == ["fitfam"] and body["resultsPerPage"] == 20
-    assert len(posts) == 1 and supply is None and prov.usage == 1
+    assert [p.id for p in posts] == ["tiktok:7300000000000000001"]  # error rows and ads dropped
+    assert supply is None and client.cost_usd == 0.01
 
     prov.search("abs workout", 3650, 20)
     assert calls[-1][2]["searchQueries"] == ["abs workout"]  # phrases use keyword search
@@ -75,6 +96,12 @@ def test_tiktok_scraper_requests():
     assert len(profile.recent_posts) == 1
 
 
+def test_apify_failed_run_is_reported():
+    client = ApifyClient("tok", mock_client(apify_mock(lambda b: [], statuses=("RUNNING", "FAILED"))))
+    with pytest.raises(ProviderUnavailable, match="FAILED"):
+        client.run("a~b", {})
+
+
 def test_apify_bad_token():
     prov = TikTokScraperProvider("bad", ApifyClient("bad", mock_client(lambda r: httpx.Response(401))))
     with pytest.raises(ProviderUnavailable):
@@ -82,19 +109,26 @@ def test_apify_bad_token():
 
 
 def test_instagram_scraper_details():
-    def handler(req):
-        body = json.loads(req.content)
-        if body["resultsType"] == "details":
-            return httpx.Response(200, json=[{"username": "MoneyMia", "fullName": "Mia", "followersCount": 8800,
-                                              "latestPosts": [IG_ITEM, {**IG_ITEM, "type": "Image"}]}])
-        assert body["directUrls"] == ["https://www.instagram.com/explore/tags/personalfinance/"]
-        return httpx.Response(200, json=[IG_ITEM])
+    seen = []
 
-    prov = InstagramScraperProvider("tok", ApifyClient("tok", mock_client(handler)))
+    def items_for(body):
+        seen.append(body)
+        if body["resultsType"] == "details":  # real "details" output has no view counts
+            return [{"username": "MoneyMia", "fullName": "Mia", "followersCount": 8800,
+                     "latestPosts": [{**IG_ITEM, "videoPlayCount": None, "videoViewCount": None}]}]
+        if body["directUrls"] == ["https://www.instagram.com/moneymia/"]:
+            return [IG_ITEM, {**IG_ITEM, "type": "Image", "productType": "feed"}]
+        assert body["directUrls"] == ["https://www.instagram.com/explore/tags/personalfinance/"]
+        return [IG_ITEM]
+
+    prov = InstagramScraperProvider("tok", ApifyClient("tok", mock_client(apify_mock(items_for, statuses=("SUCCEEDED",)))))
     posts, _ = prov.search("personal finance", 3650, 10)
-    assert posts[0].views == 250_000
+    assert posts[0].views == 250_000 and seen[0]["resultsType"] == "reels"
     prof = prov.lookup_creator("@MoneyMia", 30)
-    assert prof.creator.followers == 8800 and len(prof.recent_posts) == 1
+    assert prof.creator.followers == 8800
+    assert [p.views for p in prof.recent_posts] == [250_000]  # plays come from "reels" mode
+    assert seen[-1] == {"directUrls": ["https://www.instagram.com/moneymia/"], "resultsType": "reels",
+                        "resultsLimit": 30}
 
 
 def test_instagram_official_business_discovery():
