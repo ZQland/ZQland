@@ -30,6 +30,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
+    logging.getLogger("httpx").setLevel(logging.WARNING)  # one line per HTTP call is too noisy
     cfg = load_config()
     init_db(cfg.db_path)
     if args.cmd == "refresh":

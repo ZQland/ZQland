@@ -121,6 +121,7 @@ def tiktok_post(item: dict) -> Post | None:
         url=item.get("webVideoUrl") or f"https://www.tiktok.com/@{username}/video/{native}",
         media_url=(item.get("mediaUrls") or [None])[0],
         creator_followers=_int(dig(item, "authorMeta.fans")),
+        language=item.get("textLanguage") or None,
     )
 
 

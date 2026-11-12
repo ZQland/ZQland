@@ -185,6 +185,8 @@ def scan_keyword(conn, provider, cfg: Config, genre: str, keyword: str) -> dict:
     posts, supply = provider.search(keyword, s.lookback_days, s.results_per_keyword)
     if provider.platform == "youtube" and s.shorts_only:
         posts = [p for p in posts if scoring.is_short(p.duration_s)]
+    if s.language:
+        posts = [p for p in posts if scoring.language_matches(p.language, s.language, p.title)]
     # Only spend quota/credits on creators whose posts could qualify.
     worth_it = [p for p in posts if (p.views or 0) >= s.min_views and (
         p.creator_followers is None or s.min_followers <= p.creator_followers <= s.max_followers)]

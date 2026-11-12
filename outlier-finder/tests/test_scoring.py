@@ -83,3 +83,11 @@ def test_followers_gained_splits_between_posts_and_needs_snapshots():
     assert est["estimate"] == 3_000 and est["confidence"] == "low"
     assert scoring.estimate_followers_gained([], "2026-01-21T00:00:00Z", 5)["estimate"] is None
     assert scoring.estimate_followers_gained(snaps[:10], "2026-01-21T00:00:00Z", 5)["estimate"] is None
+
+
+def test_language_matches_and_hidden_engagement():
+    assert scoring.language_matches("en-US", "en") and scoring.language_matches(None, "en")
+    assert scoring.language_matches("und", "en") and not scoring.language_matches("hi", "en")
+    assert not scoring.language_matches(None, "en", "15 दिनों में तेजी से वजन घटाएं! 🔥 9 Easy Tips")
+    assert scoring.language_matches(None, "en", "4 Belly Fat Exercises 🔥 #shorts")
+    assert scoring.engagement_rate(1000, None, 0, 5, 5) is None

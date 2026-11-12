@@ -44,7 +44,9 @@ def source_for(cfg: Config, platform: str) -> SourceStatus:
                                 "Add YOUTUBE_API_KEY to use real data.")
         from .youtube import YouTubeProvider
         return SourceStatus(platform, "official",
-                            _cached(("yt", cfg.youtube_api_key), lambda: YouTubeProvider(cfg.youtube_api_key)),
+                            _cached(("yt", cfg.youtube_api_key, cfg.settings.language, cfg.settings.region),
+                                    lambda: YouTubeProvider(cfg.youtube_api_key, language=cfg.settings.language,
+                                                            region=cfg.settings.region)),
                             False, "YouTube Data API (official).")
 
     if platform == "tiktok":

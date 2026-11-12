@@ -35,13 +35,19 @@ class YouTubeClient:
         resp.raise_for_status()
         return resp.json()
 
-    def search(self, query: str, lookback_days: int, max_results: int = 50) -> tuple[list[str], int]:
+    def search(self, query: str, lookback_days: int, max_results: int = 50,
+               language: str = "", region: str = "") -> tuple[list[str], int]:
         after = datetime.now(timezone.utc) - timedelta(days=lookback_days)
-        data = self._get("search", {
+        params = {
             "part": "id", "q": query, "type": "video", "order": "viewCount",
             "maxResults": min(max_results, 50), "videoDuration": "short",  # < 4 min
             "publishedAfter": after.strftime("%Y-%m-%dT%H:%M:%SZ"),
-        })
+        }
+        if language:
+            params["relevanceLanguage"] = language
+        if region:
+            params["regionCode"] = region
+        data = self._get("search", params)
         ids = [i["id"]["videoId"] for i in data.get("items", []) if i.get("id", {}).get("videoId")]
         return ids, int(data.get("pageInfo", {}).get("totalResults", 0))
 
@@ -80,6 +86,7 @@ def _post(item: dict) -> Post:
         duration_s=scoring.parse_duration(item.get("contentDetails", {}).get("duration")),
         views=num("viewCount"), likes=num("likeCount"), comments=num("commentCount"),
         thumbnail=thumb, url=f"https://www.youtube.com/shorts/{item['id']}",
+        language=sn.get("defaultAudioLanguage") or sn.get("defaultLanguage"),
     )
 
 
@@ -99,15 +106,16 @@ class YouTubeProvider:
     name = "YouTube Data API (official)"
     can_search = True
 
-    def __init__(self, api_key: str, client: YouTubeClient | None = None):
+    def __init__(self, api_key: str, client: YouTubeClient | None = None, language: str = "", region: str = ""):
         self.client = client or YouTubeClient(api_key)
+        self.language, self.region = language, region
 
     @property
     def usage(self) -> int:
         return self.client.quota_used
 
     def search(self, query: str, lookback_days: int, limit: int) -> tuple[list[Post], int | None]:
-        ids, total = self.client.search(query, lookback_days, limit)
+        ids, total = self.client.search(query, lookback_days, limit, self.language, self.region)
         return ([_post(v) for v in self.client.videos(ids)] if ids else []), total
 
     def _recent(self, uploads: str, sample_size: int) -> list[Post]:

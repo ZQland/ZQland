@@ -32,6 +32,8 @@ settings:
   shorts_only: true          # YouTube: only keep videos ≤ 180s (Shorts)
   channel_sample_size: 30    # recent posts used to compute a creator's median
   channel_cache_days: 7      # re-use creator medians for this many days
+  language: en               # only keep videos in this language ("" = any). YouTube + TikTok; Instagram has no language data
+  region: US                 # YouTube: rank search results for this country ("" = any)
 
 genres:
   fitness:

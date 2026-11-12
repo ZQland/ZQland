@@ -33,6 +33,8 @@ class Settings:
     shorts_only: bool = True          # YouTube only: keep videos ≤ 180s
     channel_sample_size: int = 30
     channel_cache_days: int = 7
+    language: str = "en"              # keep videos in this language ("" = any); YouTube + TikTok
+    region: str = "US"                # YouTube: rank results for this country ("" = any)
 
 
 @dataclass

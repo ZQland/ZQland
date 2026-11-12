@@ -44,6 +44,7 @@ class Post:
     media_url: str | None = None    # direct video file (scrapers only; expires)
     description: str = ""
     creator_followers: int | None = None  # when the search result already includes it
+    language: str | None = None           # e.g. "en", "hi" when the platform reports it
 
 
 @dataclass

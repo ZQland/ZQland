@@ -45,6 +45,25 @@ def channel_median(view_counts: list[int], min_posts: int = 3) -> float | None:
     return float(median(counts))
 
 
+LATIN_SCRIPT_LANGUAGES = {"en", "es", "pt", "fr", "de", "it", "nl", "id", "tl", "pl", "sv", "tr", "vi"}
+
+
+def language_matches(post_language: str | None, wanted: str, text: str = "") -> bool:
+    """Does a post match the wanted language? Uses the platform's language tag when there is
+    one ("en-US" matches "en"); otherwise, for Latin-script languages, rejects titles that are
+    mostly written in another script (e.g. Devanagari, Arabic, Cyrillic)."""
+    if not wanted:
+        return True
+    wanted = wanted.lower().split("-")[0]
+    if post_language and post_language.lower() not in ("und", "un", "zxx"):
+        return post_language.lower().split("-")[0] == wanted
+    if wanted in LATIN_SCRIPT_LANGUAGES:
+        letters = [c for c in text if c.isalpha()]
+        other = sum(1 for c in letters if ord(c) > 0x024F)  # beyond Latin Extended-B
+        return not letters or other / len(letters) <= 0.2
+    return True
+
+
 def bucket(platform: str, duration_s: int) -> str:
     """Which median to compare against. YouTube mixes Shorts and long-form;
     TikTok and Instagram Reels are all short-form, so they use one bucket."""
@@ -76,8 +95,8 @@ def views_per_day(views: int | None, published_at: str | None, now: datetime | N
 def engagement_rate(views: int | None, likes: int | None = None, comments: int | None = None,
                     shares: int | None = None, saves: int | None = None) -> float | None:
     """(likes + comments + shares + saves) ÷ views, as a percentage."""
-    if not views:
-        return None
+    if not views or likes is None:
+        return None  # likes hidden or not reported: the rate is unknown, not zero
     interactions = sum(x for x in (likes, comments, shares, saves) if x)
     return round(interactions / views * 100, 2)
 
