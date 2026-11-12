@@ -46,7 +46,7 @@ SCHEMA = _obj({
         "spoken": {**_S, "description": "Exact words spoken in the first ~3 seconds ('' if none)."},
         "on_screen_text": {**_S, "description": "Text visible on screen in the first frames ('' if none)."},
         "visual": {**_S, "description": "What the viewer sees in the first seconds."},
-        "hook_type": {"type": "string", "enum": HOOK_TYPES},
+        "hook_type": {**_S, "description": "One of: " + ", ".join(HOOK_TYPES) + "."},
         "promise": {**_S, "description": "What the hook implicitly promises the viewer will get."},
         "why_it_works": _S,
     }),
@@ -70,10 +70,13 @@ SCHEMA = _obj({
         "audio_notes": _S,
         "notable_edits": {"type": "array", "items": _obj({"timestamp_s": _N, "edit": _S, "purpose": _S})},
     }),
-    "scores": _obj({key: _obj({
-        "score": {"type": "integer", "description": "1 to 10."},
-        "evidence": {**_S, "description": "Why, citing timestamps or quotes."},
-    }) for key, _, _ in SCORE_CRITERIA}),
+    # A list (not one object per criterion) keeps the compiled output grammar small enough.
+    "scores": {"type": "array", "description": "Exactly one entry per criterion, all 10 criteria.",
+               "items": _obj({
+                   "criterion": {"type": "string", "enum": [k for k, _, _ in SCORE_CRITERIA]},
+                   "score": {"type": "integer", "description": "1 to 10."},
+                   "evidence": {**_S, "description": "Why, citing timestamps or quotes."},
+               })},
     "why_it_outperformed": {**_S, "description": "The 2–4 factors most likely behind the outlier performance."},
     "replicate": _obj({
         "script_template": {**_S, "description": "A fill-in-the-blanks script of this format."},
@@ -129,8 +132,16 @@ def overall_score(scores: dict) -> float | None:
 
 
 def _clean(data: dict) -> dict:
-    for v in data.get("scores", {}).values():
-        v["score"] = max(1, min(10, int(v.get("score") or 1)))
+    scores = data.get("scores") or {}
+    if isinstance(scores, list):  # API returns a list; the app works with {criterion: {...}}
+        scores = {s["criterion"]: {"score": s.get("score"), "evidence": s.get("evidence", "")}
+                  for s in scores if s.get("criterion")}
+    for key, _, _ in SCORE_CRITERIA:  # a missing criterion shows as unscored, not a crash
+        scores.setdefault(key, {"score": None, "evidence": "Not scored."})
+    for v in scores.values():
+        if v.get("score") is not None:
+            v["score"] = max(1, min(10, int(v["score"])))
+    data["scores"] = scores
     data["sections"] = sorted(data.get("sections", []), key=lambda s: s.get("start_s", 0))
     data["overall_score"] = overall_score(data.get("scores", {}))
     return data

@@ -66,8 +66,11 @@ def test_upload_path_and_download_errors(cfg, tmp_path):
 # --- the Claude request ---------------------------------------------------------
 
 def _fake_breakdown():
-    return {k: v for k, v in FakeAnalyzer().analyze({"title": "t"}, {"duration_s": 20}, {}, "", []).items()
+    """What the API returns: scores as a list of {criterion, score, evidence}."""
+    data = {k: v for k, v in FakeAnalyzer().analyze({"title": "t"}, {"duration_s": 20}, {}, "", []).items()
             if k not in ("overall_score", "_meta")}
+    data["scores"] = [{"criterion": k, **v} for k, v in data["scores"].items()]
+    return data
 
 
 def _claude(handler, model="claude-opus-5-5"):
@@ -140,3 +143,16 @@ def test_claude_refusal_and_models_without_fallbacks():
     with pytest.raises(AnalysisError, match="API key"):
         _claude(lambda r: httpx.Response(401, json={"type": "error", "error": {
             "type": "authentication_error", "message": "bad"}})).analyze({}, {}, {}, "", [])
+
+
+def test_schema_stays_small():
+    """The API refuses schemas whose compiled grammar is too large (seen live). Keep it compact."""
+    def count(node):
+        n = 1
+        for child in (node.get("properties") or {}).values():
+            n += count(child)
+        if node.get("type") == "array":
+            n += count(node["items"])
+        return n
+    objects = json.dumps(SCHEMA).count('"type": "object"')
+    assert objects <= 10 and count(SCHEMA) <= 60, (objects, count(SCHEMA))

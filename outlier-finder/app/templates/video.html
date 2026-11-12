@@ -98,8 +98,8 @@
     <div class="scores">
       {% for key, label, desc in SCORE_CRITERIA %}{% set s = b.scores[key] %}
       <div class="score">
-        <div class="score-head"><span title="{{ desc }}">{{ label }}</span><strong>{{ s.score }}</strong></div>
-        <div class="meter"><i style="width: {{ s.score * 10 }}%"></i></div>
+        <div class="score-head"><span title="{{ desc }}">{{ label }}</span><strong>{{ s.score or '–' }}</strong></div>
+        <div class="meter"><i style="width: {{ (s.score or 0) * 10 }}%"></i></div>
         <small>{{ s.evidence }}</small>
       </div>
       {% endfor %}
