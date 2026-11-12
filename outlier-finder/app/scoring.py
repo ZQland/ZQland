@@ -45,22 +45,91 @@ def channel_median(view_counts: list[int]) -> float | None:
     return float(median(counts))
 
 
-def outlier_score(views: int, channel_median_views: float | None) -> float | None:
+def bucket(platform: str, duration_s: int) -> str:
+    """Which median to compare against. YouTube mixes Shorts and long-form;
+    TikTok and Instagram Reels are all short-form, so they use one bucket."""
+    if platform != "youtube":
+        return "short"
+    return "short" if is_short(duration_s) else "long"
+
+
+def outlier_score(views: int | None, channel_median_views: float | None) -> float | None:
     """How many times better than the channel's normal video this one did."""
-    if not channel_median_views or channel_median_views <= 0:
+    if views is None or not channel_median_views or channel_median_views <= 0:
         return None
     return views / channel_median_views
 
 
-def reach_ratio(views: int, subscribers: int | None) -> float | None:
+def reach_ratio(views: int | None, subscribers: int | None) -> float | None:
     """Views per subscriber (e.g. 1M views on a 10k channel = 100)."""
-    if not subscribers:
+    if not subscribers or views is None:
         return None
     return views / subscribers
 
 
-def views_per_day(views: int, published_at: str, now: datetime | None = None) -> float:
+def views_per_day(views: int | None, published_at: str | None, now: datetime | None = None) -> float | None:
+    if views is None or not published_at:
+        return None
     return views / max(age_days(published_at, now), 1.0)
+
+
+def engagement_rate(views: int | None, likes: int | None = None, comments: int | None = None,
+                    shares: int | None = None, saves: int | None = None) -> float | None:
+    """(likes + comments + shares + saves) ÷ views, as a percentage."""
+    if not views:
+        return None
+    interactions = sum(x for x in (likes, comments, shares, saves) if x)
+    return round(interactions / views * 100, 2)
+
+
+def estimate_followers_gained(snapshots: list[tuple[str, int]], published_at: str,
+                              this_views: int | None,
+                              window_posts: list[tuple[str, int | None]] | None = None,
+                              window_days: float = 7.0) -> dict:
+    """Estimate followers a post brought in, from follower snapshots over time.
+
+    No platform exposes this for other creators' videos, so we compare the follower
+    count just before posting with ~a week later, subtract the creator's normal
+    growth rate, and split the excess between posts published in that window by views.
+    """
+    if not snapshots or not published_at:
+        return {"estimate": None, "confidence": "none",
+                "note": "Track this creator to collect follower history."}
+    pts = sorted((parse_time(t), f) for t, f in snapshots if f is not None)
+    t0 = parse_time(published_at)
+    before = [p for p in pts if t0 - _days(3) <= p[0] <= t0]
+    after = [p for p in pts if t0 + _days(2) <= p[0] <= t0 + _days(window_days)]
+    if not before or not after:
+        return {"estimate": None, "confidence": "none",
+                "note": "Needs a snapshot from just before posting and one 2–7 days after."}
+    (tb, fb), (ta, fa) = before[-1], after[-1]
+    history = [p for p in pts if t0 - _days(30) <= p[0] < t0 - _days(1)]
+    rate, has_baseline = 0.0, False
+    if len(history) >= 2 and (history[-1][0] - history[0][0]).days >= 3:
+        span = (history[-1][0] - history[0][0]).total_seconds() / 86400
+        rate = (history[-1][1] - history[0][1]) / span
+        has_baseline = True
+    span_days = (ta - tb).total_seconds() / 86400
+    excess = (fa - fb) - rate * span_days
+    others = [(t, v) for t, v in (window_posts or []) if t and tb <= parse_time(t) <= ta]
+    total_views = sum(v or 0 for _, v in others) or (this_views or 0)
+    share = (this_views or 0) / total_views if total_views else 1.0
+    shared = len(others) > 1
+    return {
+        "estimate": max(0, round(excess * share)),
+        "confidence": "medium" if has_baseline and not shared else "low",
+        "window_days": round(span_days, 1),
+        "baseline_per_day": round(rate, 1),
+        "note": (f"Follower change over {span_days:.0f} days minus normal growth"
+                 + (f", split across {len(others)} posts by views" if shared else "")
+                 + ("" if has_baseline else "; no history before posting, so normal growth is unknown")
+                 + "."),
+    }
+
+
+def _days(n: float):
+    from datetime import timedelta
+    return timedelta(days=n)
 
 
 def outlier_tier(score: float | None) -> str:

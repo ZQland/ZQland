@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}{{ c.title or c.handle }} · Outlier Finder{% endblock %}
+{% block head %}{% if running %}<meta http-equiv="refresh" content="4">{% endif %}{% endblock %}
+{% block content %}
+<p><a href="/creators">← Creators</a></p>
+<span class="plat-inline p-{{ c.platform }}">{{ PLATFORM_LABELS[c.platform] }}</span>
+<h1>{{ c.title or c.handle }}</h1>
+<p class="chan">{% if c.handle %}{{ c.handle }} · {% endif %}{{ c.followers|num }} followers
+  · median {{ c.median_views_short|num }} views{% if c.median_views_long %} (Shorts), {{ c.median_views_long|num }} (long-form){% endif %}
+  {% if c.url %} · <a href="{{ c.url }}" target="_blank" rel="noopener">profile ↗</a>{% endif %}</p>
+<div class="actions">
+  <form method="post" action="/track/{{ c.id }}"><input type="hidden" name="tracked" value="{{ 0 if c.tracked else 1 }}">
+    <button type="submit">{{ 'Stop tracking' if c.tracked else '+ Track creator' }}</button></form>
+  <form method="post" action="/creators/refresh"><input type="hidden" name="channel_id" value="{{ c.id }}">
+    <button type="submit" {% if running %}disabled{% endif %}>↻ Refresh now</button></form>
+</div>
+
+<h2>Followers over time</h2>
+{% if spark %}
+<figure class="spark">
+  <svg viewBox="0 0 {{ spark.w }} {{ spark.h }}" preserveAspectRatio="none" role="img" aria-label="Follower count over time">
+    <polyline points="{{ spark.points }}" fill="none" stroke="currentColor" stroke-width="2" vector-effect="non-scaling-stroke"/>
+  </svg>
+  <figcaption>{{ spark.start }}: {{ spark.lo|num }} → {{ spark.end }}: {{ spark.hi|num }} · {{ snapshots }} snapshots</figcaption>
+</figure>
+{% else %}
+<p class="note">{{ snapshots }} snapshot{{ '' if snapshots == 1 else 's' }} so far. Refresh this creator daily to chart growth and estimate followers gained per video.</p>
+{% endif %}
+
+<h2>Posts</h2>
+<form class="filters" method="get">
+  <label>Sort
+    <select name="sort" onchange="this.form.submit()">
+      {% for key, label in [('outlier','Outlier score'),('engagement','Engagement rate'),('views','Views'),('newest','Newest')] %}
+      <option value="{{ key }}" {% if key == sort %}selected{% endif %}>{{ label }}</option>{% endfor %}
+    </select>
+  </label>
+</form>
+<div class="grid">
+  {% for v in posts %}{% include "_card.html" %}{% else %}<p class="note">No posts stored yet.</p>{% endfor %}
+</div>
+{% endblock %}

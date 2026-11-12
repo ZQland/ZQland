@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block head %}{% if running %}<meta http-equiv="refresh" content="4">{% endif %}{% endblock %}
+{% block content %}
+<h1>Tracked creators</h1>
+<p class="lead">Add creators in your niche from any platform. The app pulls their recent posts, scores each one against
+  the creator's own median, and takes a follower snapshot on every refresh. With snapshots from before and after a
+  post, it can <strong>estimate followers gained per video</strong>. Refresh daily (or schedule it, see the README) to build that history.</p>
+
+{% if error %}<p class="error">{{ error }}</p>{% endif %}
+<form class="filters" method="post" action="/creators">
+  <label>Platform
+    <select name="platform">{% for s in sources if s.provider %}<option value="{{ s.platform }}">{{ PLATFORM_LABELS[s.platform] }}</option>{% endfor %}</select>
+  </label>
+  <label class="grow">Handle or profile URL
+    <input type="text" name="handle" placeholder="@creator or https://www.tiktok.com/@creator" required>
+  </label>
+  <button class="primary" type="submit" {% if running %}disabled{% endif %}>Add creator</button>
+</form>
+<form method="post" action="/creators/refresh" class="inline">
+  <button type="submit" {% if running or not creators %}disabled{% endif %}>↻ Refresh all tracked creators</button>
+</form>
+{% if running %}<p class="note">⏳ Working… <a href="/scans">see progress</a>. This page refreshes itself.</p>{% endif %}
+
+<form class="filters" method="get">
+  <label>Platform
+    <select name="platform" onchange="this.form.submit()">
+      <option value="">All platforms</option>
+      {% for p in PLATFORMS %}<option value="{{ p }}" {% if p == platform %}selected{% endif %}>{{ PLATFORM_LABELS[p] }}</option>{% endfor %}
+    </select>
+  </label>
+</form>
+
+{% if not creators %}
+  <div class="empty"><p>No tracked creators yet. Add one above, or open any outlier and click “Track creator”.</p></div>
+{% else %}
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Creator</th><th>Platform</th><th class="r">Followers</th><th class="r">30-day growth</th>
+    <th class="r">Median views</th><th class="r">Outliers (≥{{ cfg.settings.min_outlier_score }}×)</th><th class="r">Best</th>
+    <th class="r">Snapshots</th><th>Updated</th></tr></thead>
+  <tbody>
+  {% for c in creators %}
+    <tr>
+      <td><a href="/creator/{{ c.id }}"><strong>{{ c.title or c.handle }}</strong></a>{% if c.handle %}<br><small class="muted">{{ c.handle }}</small>{% endif %}</td>
+      <td>{{ PLATFORM_LABELS[c.platform] }}</td>
+      <td class="r">{{ c.followers|num }}</td>
+      <td class="r">{{ ('+' ~ (c.growth_30d|num)) if c.growth_30d and c.growth_30d > 0 else (c.growth_30d|num) }}</td>
+      <td class="r">{{ c.median_views_short|num }}</td>
+      <td class="r">{{ c.outliers }}</td>
+      <td class="r">{{ c.best_outlier ~ '×' if c.best_outlier else '–' }}</td>
+      <td class="r">{{ c.snapshots }}</td>
+      <td>{{ (c.updated_at or '')[:10] }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endif %}
+{% endblock %}

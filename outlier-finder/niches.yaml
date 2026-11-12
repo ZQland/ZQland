@@ -1,18 +1,37 @@
-# Genres and the search keywords scanned for each one.
-# Each keyword costs ~100 YouTube API quota units per scan (search.list),
-# plus ~2 units per new channel. The free daily quota is 10,000 units,
-# so scanning all four genres once (~45 keywords) fits in one day.
+# Genres, keywords, platforms and thresholds.
+# YouTube: each keyword costs ~100 of the free 10,000 daily API units, plus ~2 per new channel.
+# TikTok / Instagram scrapers: Apify bills per result (results_per_keyword per keyword,
+# plus each new creator's recent posts).
+
+# Where data comes from, per platform:
+#   official = the platform's own API (YouTube Data API; Instagram Business Discovery)
+#   scraper  = Apify third-party scraper (TikTok, Instagram). Breaks those platforms'
+#              terms of service: OK for personal research, risky in a product you sell.
+#   off      = skip this platform
+# Official Instagram has no keyword search: it only works for creators you add on the
+# Creators page. TikTok has no official option for other creators' videos.
+platforms:
+  youtube: official
+  tiktok: scraper
+  instagram: scraper
+
+analysis:
+  model: claude-opus-5-5     # Claude model for script/format breakdowns
+  effort: high               # low | medium | high | xhigh | max
+  whisper_model: base        # tiny | base | small | medium | large-v3 (bigger = slower, more accurate)
+  max_frames: 8              # video frames sent to Claude per analysis
+  allow_downloads: true      # download videos (scraper links; yt-dlp for YouTube). false = uploads only
 
 settings:
   lookback_days: 90          # only look at videos uploaded in this window
-  results_per_keyword: 50    # top results by view count per keyword (max 50)
-  max_subscribers: 100000    # ignore channels bigger than this
-  min_subscribers: 100       # ignore brand-new / empty channels
+  results_per_keyword: 50    # results per keyword search (YouTube max 50)
+  max_followers: 100000      # ignore creators bigger than this
+  min_followers: 100         # ignore brand-new / empty accounts
   min_views: 10000           # ignore videos below this many views
-  min_outlier_score: 3.0     # views ÷ channel median must be at least this
-  shorts_only: true          # only keep videos ≤ 180s (YouTube Shorts)
-  channel_sample_size: 30    # recent uploads used to compute a channel's median
-  channel_cache_days: 7      # re-use channel medians for this many days
+  min_outlier_score: 3.0     # views ÷ creator median must be at least this
+  shorts_only: true          # YouTube: only keep videos ≤ 180s (Shorts)
+  channel_sample_size: 30    # recent posts used to compute a creator's median
+  channel_cache_days: 7      # re-use creator medians for this many days
 
 genres:
   fitness:

@@ -1,0 +1,19 @@
+<a class="card" href="/video/{{ v.id }}">
+  <div class="thumb">
+    {% if v.thumbnail %}<img src="{{ v.thumbnail }}" alt="" loading="lazy" referrerpolicy="no-referrer">{% else %}<div class="ph">▶</div>{% endif %}
+    {% if v.outlier_score %}<span class="tier t{{ v.tier|replace('+','')|replace('x','') }}">{{ v.outlier_score }}×</span>{% endif %}
+    <span class="plat p-{{ v.platform }}">{{ PLATFORM_LABELS[v.platform].split(' ')[0] }}</span>
+    {% if v.analysis_status == 'done' %}<span class="analyzed" title="Analyzed">✓ analyzed</span>{% endif %}
+  </div>
+  <div class="body">
+    <div class="title">{{ v.title or '(no caption)' }}</div>
+    <div class="chan">{{ v.channel_title or v.channel_handle }} · {{ v.followers|num }} followers</div>
+    <div class="stats">
+      <span title="Views">👁 {{ v.views|num }}</span>
+      {% if v.reach_ratio %}<span title="Views ÷ followers">↗ {{ v.reach_ratio }}×</span>{% endif %}
+      {% if v.engagement_rate is not none %}<span title="Engagement rate: (likes + comments + shares + saves) ÷ views">💬 {{ v.engagement_rate }}%</span>{% endif %}
+      {% if v.views_per_day %}<span title="Views per day">⚡ {{ v.views_per_day|num }}/d</span>{% endif %}
+    </div>
+    {% if v.keywords %}<div class="tags">{% for k in v.keywords.split(',') if k %}<span>{{ k }}</span>{% endfor %}</div>{% endif %}
+  </div>
+</a>

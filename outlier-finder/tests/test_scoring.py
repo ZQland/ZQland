@@ -49,3 +49,37 @@ def test_opportunity_prefers_low_supply():
     scores = [5.0, 8.0, 12.0]
     assert scoring.opportunity_score(scores, 1_000) > scoring.opportunity_score(scores, 1_000_000)
     assert scoring.opportunity_score([], 10) == 0.0
+
+
+def test_engagement_rate_and_bucket():
+    assert scoring.engagement_rate(1000, 50, 10, 5, 35) == 10.0
+    assert scoring.engagement_rate(1000, 50, None, None, None) == 5.0
+    assert scoring.engagement_rate(0, 5) is None
+    assert scoring.bucket("youtube", 600) == "long"
+    assert scoring.bucket("tiktok", 600) == "short"  # TikTok/Reels: one bucket
+
+
+def _snaps(start_followers, daily, jump_day=None, jump=0, days=40):
+    out, f = [], start_followers
+    for d in range(days):
+        if d == jump_day:
+            f += jump
+        out.append((f"2026-01-{1 + d:02d}T00:00:00Z" if d < 31 else f"2026-02-{d - 30:02d}T00:00:00Z", f))
+        f += daily
+    return out
+
+
+def test_followers_gained_subtracts_normal_growth():
+    snaps = _snaps(10_000, 10, jump_day=22, jump=5_000)  # +10/day, +5,000 after a post on Jan 21
+    est = scoring.estimate_followers_gained(snaps, "2026-01-21T12:00:00Z", 900_000)
+    assert est["confidence"] == "medium"
+    assert 4_900 <= est["estimate"] <= 5_100
+
+
+def test_followers_gained_splits_between_posts_and_needs_snapshots():
+    snaps = _snaps(10_000, 0, jump_day=22, jump=4_000)
+    posts = [("2026-01-21T12:00:00Z", 300_000), ("2026-01-23T12:00:00Z", 100_000)]
+    est = scoring.estimate_followers_gained(snaps, "2026-01-21T12:00:00Z", 300_000, posts)
+    assert est["estimate"] == 3_000 and est["confidence"] == "low"
+    assert scoring.estimate_followers_gained([], "2026-01-21T00:00:00Z", 5)["estimate"] is None
+    assert scoring.estimate_followers_gained(snaps[:10], "2026-01-21T00:00:00Z", 5)["estimate"] is None

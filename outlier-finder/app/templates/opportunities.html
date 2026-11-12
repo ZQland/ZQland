@@ -2,10 +2,17 @@
 {% block content %}
 <h1>Keyword opportunities</h1>
 <p class="lead">Where demand is high and supply is low. <strong>Demand</strong> = outliers found × their median outlier score.
-  <strong>Supply</strong> = YouTube's approximate count of matching Shorts uploaded in the last {{ cfg.settings.lookback_days }} days.
-  <strong>Opportunity</strong> = demand ÷ log₁₀(supply).</p>
+  <strong>Supply</strong> = YouTube's rough count of matching Shorts from the last {{ cfg.settings.lookback_days }} days.
+  <strong>Opportunity</strong> = demand ÷ log₁₀(supply). TikTok and Instagram don't publish supply counts, so their
+  opportunity is demand only. Compare those within the same platform.</p>
 
 <form class="filters" method="get">
+  <label>Platform
+    <select name="platform" onchange="this.form.submit()">
+      <option value="">All platforms</option>
+      {% for p in PLATFORMS %}<option value="{{ p }}" {% if p == platform %}selected{% endif %}>{{ PLATFORM_LABELS[p] }}</option>{% endfor %}
+    </select>
+  </label>
   <label>Genre
     <select name="genre" onchange="this.form.submit()">
       <option value="">All genres</option>
@@ -19,25 +26,25 @@
 {% else %}
 <div class="table-wrap">
 <table>
-  <thead><tr><th>Keyword</th><th>Genre</th><th class="r">Opportunity</th><th class="r">Outliers</th>
+  <thead><tr><th>Keyword</th><th>Platform</th><th>Genre</th><th class="r">Opportunity</th><th class="r">Outliers</th>
     <th class="r">Median outlier</th><th class="r">Supply</th><th class="r">Candidates</th><th></th></tr></thead>
   <tbody>
   {% set top = rows[0].opportunity or 1 %}
   {% for r in rows %}
     <tr>
       <td><strong>{{ r.keyword }}</strong></td>
+      <td>{{ PLATFORM_LABELS[r.platform] }}</td>
       <td>{{ r.genre|replace('_',' ') }}</td>
       <td class="r"><span class="bar" style="--w: {{ ((r.opportunity or 0) / top * 100)|round }}%"></span>{{ r.opportunity }}</td>
       <td class="r">{{ r.outliers }}</td>
       <td class="r">{{ r.median_outlier ~ '×' if r.median_outlier else '–' }}</td>
       <td class="r">{{ r.supply|num }}</td>
       <td class="r">{{ r.candidates }}</td>
-      <td><a href="/?genre={{ r.genre }}&keyword={{ r.keyword|urlencode }}">View →</a></td>
+      <td><a href="/?platform={{ r.platform }}&genre={{ r.genre }}&keyword={{ r.keyword|urlencode }}">View →</a></td>
     </tr>
   {% endfor %}
   </tbody>
 </table>
 </div>
-<p class="note">YouTube's result counts are rough estimates, so treat supply as a relative signal between keywords, not an exact number.</p>
 {% endif %}
 {% endblock %}

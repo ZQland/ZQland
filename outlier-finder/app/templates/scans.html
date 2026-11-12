@@ -2,32 +2,41 @@
 {% block head %}{% if running %}<meta http-equiv="refresh" content="3">{% endif %}{% endblock %}
 {% block content %}
 <h1>Scans</h1>
-<p class="lead">Each keyword search costs about 100 of your 10,000 free daily YouTube API units, plus about 2 units per new channel.
-  Channel medians are cached for {{ cfg.settings.channel_cache_days }} days, so repeat scans are cheaper.</p>
+<p class="lead">A scan searches every keyword of a genre on the platforms you pick, then pulls recent posts from
+  the small creators it finds so it can compute their median views. Creator data is cached for
+  {{ cfg.settings.channel_cache_days }} days, so repeat scans cost less.</p>
 
-<div class="scan-buttons">
-  {% for g, units in estimates.items() %}
-  <form method="post" action="/scans">
-    <input type="hidden" name="target" value="{{ g }}">
-    <button type="submit" {% if running %}disabled{% endif %}>Scan {{ g|replace('_',' ') }}<small>~{{ units|num }}+ units</small></button>
-  </form>
-  {% endfor %}
-  <form method="post" action="/scans">
-    <input type="hidden" name="target" value="all">
-    <button class="primary" type="submit" {% if running %}disabled{% endif %}>Scan all<small>~{{ estimates.values()|sum|num }}+ units</small></button>
-  </form>
-</div>
+<form method="post" action="/scans" class="scan-form">
+  <fieldset>
+    <legend>Platforms</legend>
+    {% for s in sources %}
+      {% set usable = s.provider and s.provider.can_search %}
+      <label class="check {{ '' if usable else 'disabled' }}">
+        <input type="checkbox" name="platforms" value="{{ s.platform }}" {% if usable %}checked{% else %}disabled{% endif %}>
+        {{ PLATFORM_LABELS[s.platform] }}
+        <small>{% if not s.provider %}off{% elif not s.provider.can_search %}watchlist only{% elif s.demo %}demo data{% else %}{{ per_kw[s.platform] }} per keyword{% endif %}</small>
+      </label>
+    {% endfor %}
+  </fieldset>
+  <div class="scan-buttons">
+    {% for g in genres %}
+    <button type="submit" name="target" value="{{ g }}" {% if running %}disabled{% endif %}>Scan {{ g|replace('_',' ') }}<small>{{ cfg.genres[g]|length }} keywords</small></button>
+    {% endfor %}
+    <button class="primary" type="submit" name="target" value="all" {% if running %}disabled{% endif %}>Scan all<small>{{ cfg.genres.values()|map('length')|sum }} keywords</small></button>
+  </div>
+</form>
+<p class="note">YouTube: 10,000 free units/day. Each keyword is about 100 units. TikTok/Instagram scrapers are billed by Apify per result.</p>
 
 {% if scans %}
 <div class="table-wrap">
 <table>
-  <thead><tr><th>#</th><th>Target</th><th>Started</th><th>Status</th><th class="r">Quota used</th><th>Progress</th></tr></thead>
+  <thead><tr><th>#</th><th>Job</th><th>Started</th><th>Status</th><th class="r">Units / results</th><th>Progress</th></tr></thead>
   <tbody>
   {% for s in scans %}
     <tr>
       <td>{{ s.id }}</td><td>{{ s.target|replace('_',' ') }}</td><td>{{ s.started_at|replace('T',' ')|replace('Z',' UTC') }}</td>
       <td><span class="status {{ s.status }}">{{ s.status|replace('_',' ') }}</span></td>
-      <td class="r">{{ s.quota_used }}</td><td>{{ s.message or '' }}</td>
+      <td class="r">{{ s.quota_used }}</td><td class="wrap-cell">{{ s.message or '' }}</td>
     </tr>
   {% endfor %}
   </tbody>

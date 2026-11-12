@@ -13,16 +13,23 @@
     <nav>
       <a href="/">Outliers</a>
       <a href="/opportunities">Opportunities</a>
+      <a href="/creators">Creators</a>
       <a href="/scans">Scans</a>
     </nav>
-    <span class="meta">{{ summary.videos }} videos · {{ summary.channels }} channels</span>
+    <span class="meta">{{ summary.videos|num }} videos · {{ summary.channels|num }} creators · {{ summary.tracked }} tracked</span>
   </header>
-  {% if cfg.demo_mode %}
-  <div class="banner">
-    <strong>Demo mode:</strong> no <code>YOUTUBE_API_KEY</code> set, so scans use synthetic data.
-    Add your key to <code>outlier-finder/.env</code> and restart to scan real YouTube Shorts.
+  <div class="sources">
+    {% for s in sources %}
+      <span class="src {{ 'demo' if s.demo else ('off' if not s.provider else 'live') }}" title="{{ s.note }}">
+        {{ PLATFORM_LABELS[s.platform] }}:
+        {% if not s.provider %}off{% elif s.demo %}demo data{% else %}{{ s.mode }}{% endif %}
+      </span>
+    {% endfor %}
+    <span class="src {{ 'live' if cfg.anthropic_ready else 'demo' }}"
+          title="{{ 'Claude analyses enabled' if cfg.anthropic_ready else 'Add ANTHROPIC_API_KEY for real analyses' }}">
+      Claude: {{ cfg.analysis.model if cfg.anthropic_ready else 'demo analyses' }}
+    </span>
   </div>
-  {% endif %}
   <main>{% block content %}{% endblock %}</main>
 </body>
 </html>
