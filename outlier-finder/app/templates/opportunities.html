@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Keyword opportunities</h1>
+<p class="lead">Where demand is high and supply is low. <strong>Demand</strong> = outliers found × their median outlier score.
+  <strong>Supply</strong> = YouTube's approximate count of matching Shorts uploaded in the last {{ cfg.settings.lookback_days }} days.
+  <strong>Opportunity</strong> = demand ÷ log₁₀(supply).</p>
+
+<form class="filters" method="get">
+  <label>Genre
+    <select name="genre" onchange="this.form.submit()">
+      <option value="">All genres</option>
+      {% for g in genres %}<option value="{{ g }}" {% if g == genre %}selected{% endif %}>{{ g|replace('_',' ') }}</option>{% endfor %}
+    </select>
+  </label>
+</form>
+
+{% if not rows %}
+  <div class="empty"><p>No keywords scanned yet.</p><p><a class="button" href="/scans">Run a scan →</a></p></div>
+{% else %}
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Keyword</th><th>Genre</th><th class="r">Opportunity</th><th class="r">Outliers</th>
+    <th class="r">Median outlier</th><th class="r">Supply</th><th class="r">Candidates</th><th></th></tr></thead>
+  <tbody>
+  {% set top = rows[0].opportunity or 1 %}
+  {% for r in rows %}
+    <tr>
+      <td><strong>{{ r.keyword }}</strong></td>
+      <td>{{ r.genre|replace('_',' ') }}</td>
+      <td class="r"><span class="bar" style="--w: {{ ((r.opportunity or 0) / top * 100)|round }}%"></span>{{ r.opportunity }}</td>
+      <td class="r">{{ r.outliers }}</td>
+      <td class="r">{{ r.median_outlier ~ '×' if r.median_outlier else '–' }}</td>
+      <td class="r">{{ r.supply|num }}</td>
+      <td class="r">{{ r.candidates }}</td>
+      <td><a href="/?genre={{ r.genre }}&keyword={{ r.keyword|urlencode }}">View →</a></td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+<p class="note">YouTube's result counts are rough estimates, so treat supply as a relative signal between keywords, not an exact number.</p>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}{{ v.title }} · Outlier Finder{% endblock %}
+{% block content %}
+<p><a href="javascript:history.back()">← Back</a></p>
+<div class="detail">
+  <div class="detail-media">
+    {% if v.id.startswith('demo_') %}
+      <div class="ph big">▶ demo video</div>
+    {% else %}
+      <iframe src="https://www.youtube.com/embed/{{ v.id }}" title="{{ v.title }}" allowfullscreen></iframe>
+    {% endif %}
+  </div>
+  <div class="detail-info">
+    <h1>{{ v.title }}</h1>
+    <p class="chan">{{ v.channel_title }} · {{ v.subscribers|num }} subscribers</p>
+    <div class="metrics">
+      <div><span>{{ v.outlier_score }}×</span>outlier score<small>{{ v.views|num }} vs. median {{ v.channel_median|num }} ({{ v.sample_size }} recent uploads)</small></div>
+      <div><span>{{ v.reach_ratio }}×</span>views ÷ subs</div>
+      <div><span>{{ v.views|num }}</span>views</div>
+      <div><span>{{ v.views_per_day|num }}</span>views / day</div>
+      <div><span>{{ v.likes|num }}</span>likes{% if v.likes and v.views %}<small>{{ (v.likes / v.views * 100)|round(1) }}% of views</small>{% endif %}</div>
+      <div><span>{{ v.comments|num }}</span>comments</div>
+      <div><span>{{ v.duration_s }}s</span>length</div>
+      <div><span>{{ v.published_at[:10] }}</span>published</div>
+    </div>
+    <p class="tags">{% for k in (v.keywords or '').split(',') if k %}<span>{{ k }}</span>{% endfor %}</p>
+    {% if not v.id.startswith('demo_') %}<p><a class="button" href="https://www.youtube.com/shorts/{{ v.id }}" target="_blank" rel="noopener">Open on YouTube ↗</a></p>{% endif %}
+  </div>
+</div>
+
+<section class="soon">
+  <h2>AI breakdown <small>coming in Phase 2</small></h2>
+  <ul>
+    <li><strong>Topic &amp; angle</strong>: what it's about and the reusable format</li>
+    <li><strong>Structure</strong>: hook, setup, rehooks, value beats, payoff, CTA, loop (with timestamps)</li>
+    <li><strong>Retention edits</strong>: cuts per 10s, captions, zooms, B-roll, sound hits, pattern interrupts</li>
+    <li><strong>Scores (1–10 with evidence)</strong>: hook, retention, value, payoff, novelty, emotion, shareability, clarity, CTA, replicability</li>
+  </ul>
+</section>
+{% endblock %}

@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Outlier Shorts</h1>
+<p class="lead">Videos from small channels ({{ cfg.settings.min_subscribers|num }}–{{ cfg.settings.max_subscribers|num }} subs)
+  that got at least <strong>{{ cfg.settings.min_outlier_score }}×</strong> their channel's median views.</p>
+
+<form class="filters" method="get">
+  <label>Genre
+    <select name="genre" onchange="this.form.keyword && (this.form.keyword.value=''); this.form.submit()">
+      <option value="">All genres</option>
+      {% for g in genres %}<option value="{{ g }}" {% if g == genre %}selected{% endif %}>{{ g|replace('_',' ') }}</option>{% endfor %}
+    </select>
+  </label>
+  {% if keywords %}
+  <label>Keyword
+    <select name="keyword">
+      <option value="">All keywords</option>
+      {% for k in keywords %}<option value="{{ k }}" {% if k == keyword %}selected{% endif %}>{{ k }}</option>{% endfor %}
+    </select>
+  </label>
+  {% endif %}
+  <label>Sort
+    <select name="sort">
+      {% for key, label in [('outlier','Outlier score'),('reach','Views ÷ subs'),('velocity','Views per day'),('views','Total views'),('newest','Newest')] %}
+      <option value="{{ key }}" {% if key == sort %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>Min outlier
+    <input type="number" name="min_outlier" step="0.5" min="0" value="{{ min_outlier or '' }}" placeholder="{{ cfg.settings.min_outlier_score }}">
+  </label>
+  <label>Max subs
+    <input type="number" name="max_subs" step="1000" min="0" value="{{ max_subs or '' }}" placeholder="{{ cfg.settings.max_subscribers }}">
+  </label>
+  <button type="submit">Apply</button>
+</form>
+
+{% if running %}<p class="note">⏳ A scan is running. <a href="/scans">See progress</a>, then refresh this page.</p>{% endif %}
+
+{% if not videos %}
+  <div class="empty">
+    <p>No outliers yet.</p>
+    <p><a class="button" href="/scans">Run your first scan →</a></p>
+  </div>
+{% else %}
+<p class="count">{% if videos|length >= 200 %}Showing the top 200 outliers. Narrow by genre or keyword to see more.{% else %}{{ videos|length }} outliers{% endif %}</p>
+<div class="grid">
+  {% for v in videos %}
+  <a class="card" href="/video/{{ v.id }}">
+    <div class="thumb">
+      {% if v.thumbnail %}<img src="{{ v.thumbnail }}" alt="" loading="lazy">{% else %}<div class="ph">▶</div>{% endif %}
+      <span class="tier t{{ v.tier|replace('+','')|replace('x','') }}">{{ v.outlier_score }}×</span>
+    </div>
+    <div class="body">
+      <div class="title">{{ v.title }}</div>
+      <div class="chan">{{ v.channel_title }} · {{ v.subscribers|num }} subs</div>
+      <div class="stats">
+        <span title="Views">👁 {{ v.views|num }}</span>
+        <span title="Views ÷ subscribers">↗ {{ v.reach_ratio }}× subs</span>
+        <span title="Views per day">⚡ {{ v.views_per_day|num }}/day</span>
+      </div>
+      <div class="tags">{% for k in (v.keywords or '').split(',') if k %}<span>{{ k }}</span>{% endfor %}</div>
+    </div>
+  </a>
+  {% endfor %}
+</div>
+{% endif %}
+{% endblock %}

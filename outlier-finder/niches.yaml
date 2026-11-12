@@ -1,0 +1,60 @@
+# Genres and the search keywords scanned for each one.
+# Each keyword costs ~100 YouTube API quota units per scan (search.list),
+# plus ~2 units per new channel. The free daily quota is 10,000 units,
+# so scanning all four genres once (~45 keywords) fits in one day.
+
+settings:
+  lookback_days: 90          # only look at videos uploaded in this window
+  results_per_keyword: 50    # top results by view count per keyword (max 50)
+  max_subscribers: 100000    # ignore channels bigger than this
+  min_subscribers: 100       # ignore brand-new / empty channels
+  min_views: 10000           # ignore videos below this many views
+  min_outlier_score: 3.0     # views ÷ channel median must be at least this
+  shorts_only: true          # only keep videos ≤ 180s (YouTube Shorts)
+  channel_sample_size: 30    # recent uploads used to compute a channel's median
+  channel_cache_days: 7      # re-use channel medians for this many days
+
+genres:
+  fitness:
+    - fitness motivation
+    - workout motivation
+    - fitness journey
+    - abs workout
+    - full body workout
+    - fitfam
+    - common gym mistakes form tips
+    - fat loss routine
+    - weight loss routine
+  content_creation:
+    - content creator tips
+    - how to go viral
+    - grow on tiktok
+    - content ideas
+    - video hooks
+    - ai tools for creators
+    - youtube algorithm
+    - ugc creator
+    - video editing tips
+    - monetize your content
+  ai:
+    - ai tools
+    - chatgpt
+    - ai video generator
+    - ai art
+    - ai avatar
+    - faceless channel
+    - ai automation
+    - prompt engineering
+    - ai news
+    - ai side hustle
+  finance:
+    - personal finance
+    - investing for beginners
+    - passive income
+    - side hustle
+    - budgeting
+    - stock market
+    - financial freedom
+    - credit score
+    - real estate investing
+    - crypto

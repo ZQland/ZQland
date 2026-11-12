@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Outlier Finder{% endblock %}</title>
+  <link rel="stylesheet" href="/static/style.css">
+  {% block head %}{% endblock %}
+</head>
+<body>
+  <header class="top">
+    <a class="brand" href="/">📈 Outlier Finder</a>
+    <nav>
+      <a href="/">Outliers</a>
+      <a href="/opportunities">Opportunities</a>
+      <a href="/scans">Scans</a>
+    </nav>
+    <span class="meta">{{ summary.videos }} videos · {{ summary.channels }} channels</span>
+  </header>
+  {% if cfg.demo_mode %}
+  <div class="banner">
+    <strong>Demo mode:</strong> no <code>YOUTUBE_API_KEY</code> set, so scans use synthetic data.
+    Add your key to <code>outlier-finder/.env</code> and restart to scan real YouTube Shorts.
+  </div>
+  {% endif %}
+  <main>{% block content %}{% endblock %}</main>
+</body>
+</html>
