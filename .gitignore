@@ -4,3 +4,4 @@ __pycache__/
 .pytest_cache/
 outlier-finder/data/
 outlier-finder/.env
+outlier-finder/.taste-skill/

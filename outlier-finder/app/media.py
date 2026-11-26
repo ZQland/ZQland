@@ -4,6 +4,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import re
+import time
 import shutil
 import subprocess
 import sys
@@ -32,12 +33,56 @@ def safe_name(video_id: str) -> str:
     return re.sub(r"[^\w.-]", "_", video_id)
 
 
-def download(url: str, dest: Path) -> Path:
+def download(url: str, dest: Path, auth_token: str | None = None) -> Path:
+    """Fetch a video file. `auth_token` is sent only to Apify's API, whose storage links are private."""
     dest.parent.mkdir(parents=True, exist_ok=True)
     headers = {"User-Agent": "Mozilla/5.0 (outlier-finder research tool)"}
+    private = httpx.URL(url).host == "api.apify.com"
+    if private and auth_token:
+        headers["Authorization"] = f"Bearer {auth_token}"
+    try:
+        try:
+            return _stream_to(url, dest, headers, private)
+        except httpx.ConnectError:
+            # Instagram's links name a regional edge server (e.g. instagram.ftpa1-2.fna.fbcdn.net) picked for
+            # where the scraper ran; some don't resolve elsewhere. The link is signed, not tied to the host,
+            # so the same file is served by Meta's global host.
+            alt = _global_meta_host(url)
+            if not alt:
+                raise
+            return _stream_to(alt, dest, headers, False)
+    except httpx.TransportError as e:  # DNS, refused, timeout: say what happened instead of a raw socket error
+        host = httpx.URL(url).host
+        msg = str(e)
+        if isinstance(e, httpx.ConnectError) and ("nodename" in msg or "not known" in msg or "getaddrinfo" in msg):
+            why = (f"this computer can't look up {host}. Instagram/TikTok links point at a regional video server "
+                   "chosen for wherever the scraper ran, and some of them don't exist outside that region")
+        elif isinstance(e, httpx.TimeoutException):
+            why = f"{host} didn't answer in time"
+        else:
+            why = f"couldn't connect to {host} ({type(e).__name__})"
+        raise MediaError(f"Download failed: {why}.") from e
+
+
+def _global_meta_host(url: str) -> str | None:
+    u = httpx.URL(url)
+    host = u.host or ""
+    if host != "scontent.cdninstagram.com" and (host.endswith(".fbcdn.net") or host.endswith(".cdninstagram.com")):
+        return str(u.copy_with(host="scontent.cdninstagram.com"))
+    return None
+
+
+def _stream_to(url: str, dest: Path, headers: dict, private: bool) -> Path:
     with httpx.stream("GET", url, headers=headers, follow_redirects=True, timeout=120) as r:
         if r.status_code >= 400:
-            raise MediaError(f"Download failed with HTTP {r.status_code} (the link may have expired).")
+            if private and r.status_code in (401, 403, 404):
+                why = ("Apify storage refused it: the file is private and needs APIFY_TOKEN, or it's past "
+                       "Apify's 7-day retention")
+            elif r.status_code in (401, 403, 410):
+                why = "the platform's video links expire after a few hours"
+            else:
+                why = "the server returned an error"
+            raise MediaError(f"Download failed with HTTP {r.status_code} ({why}).")
         size = 0
         with open(dest, "wb") as f:
             for chunk in r.iter_bytes():
@@ -151,3 +196,58 @@ def extract_frames(path: Path, times: list[float], out_dir: Path, width: int = 5
 def extract_audio(path: Path, dest: Path) -> Path:
     _run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(path), "-vn", "-ac", "1", "-ar", "16000", str(dest)])
     return dest
+
+
+# --- thumbnails ------------------------------------------------------------------------
+# Instagram/TikTok thumbnail links are signed and expire after a few days, so a feed of older
+# posts turns into broken images. Each thumbnail is saved locally the first time it's fetched
+# (right after a scan, or on first view) and served from disk after that.
+THUMB_MAX_BYTES = 3 * 1024 * 1024
+_MISS_RETRY_SECONDS = 6 * 3600
+
+
+def thumb_path(media_dir: Path, video_id: str) -> Path:
+    return media_dir / "thumbs" / f"{safe_name(video_id)}.jpg"
+
+
+def cache_thumbnail(media_dir: Path, video_id: str, url: str | None) -> Path | None:
+    """The local copy of a video's thumbnail, fetching it once if needed. None if unavailable."""
+    path = thumb_path(media_dir, video_id)
+    if path.exists():
+        return path
+    if not url or not url.startswith(("http://", "https://")):
+        return None
+    miss = path.with_suffix(".miss")
+    if miss.exists() and time.time() - miss.stat().st_mtime < _MISS_RETRY_SECONDS \
+            and miss.read_text(errors="ignore") == url:  # a rescan brings a new link: try that at once
+        return None
+    path.parent.mkdir(parents=True, exist_ok=True)
+    for candidate in filter(None, [url, _global_meta_host(url)]):
+        try:
+            r = httpx.get(candidate, timeout=8, follow_redirects=True,
+                          headers={"User-Agent": "Mozilla/5.0 (outlier-finder research tool)"})
+        except httpx.HTTPError:
+            continue
+        if r.status_code == 200 and r.headers.get("content-type", "").startswith("image/") \
+                and 0 < len(r.content) <= THUMB_MAX_BYTES:
+            tmp = path.with_suffix(".part")
+            tmp.write_bytes(r.content)
+            tmp.replace(path)
+            miss.unlink(missing_ok=True)
+            return path
+    miss.write_text(url)  # expired or unreachable: don't retry this link on every page view
+    return None
+
+
+def cache_missing_thumbnails(db_path: Path, media_dir: Path, limit: int = 1000) -> int:
+    """Save every thumbnail not on disk yet, while the links still work. Returns how many were saved."""
+    from concurrent.futures import ThreadPoolExecutor
+    import sqlite3
+    with sqlite3.connect(db_path) as conn:
+        rows = conn.execute("SELECT id, thumbnail FROM videos WHERE thumbnail LIKE 'http%' "
+                            "ORDER BY published_at DESC LIMIT ?", (limit,)).fetchall()
+    todo = [(vid, url) for vid, url in rows if not thumb_path(media_dir, vid).exists()]
+    if not todo:
+        return 0
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        return sum(1 for p in pool.map(lambda r: cache_thumbnail(media_dir, *r), todo) if p)

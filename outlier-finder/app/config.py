@@ -57,6 +57,7 @@ class ApifySettings:
     """Spending guards for the Apify scrapers (TikTok, Instagram). Apify bills per result."""
     monthly_budget_usd: float = 5.0   # stop starting runs once this month's Apify usage reaches this
     max_usd_per_scan: float = 1.0     # hard cap for one scan; Apify stops the run at this charge
+    max_usd_per_import: float = 3.0   # hard cap for one bulk 'add creators' job, per platform
     baseline_posts: int = 15          # posts fetched the first time a creator is looked up (for the median)
     refresh_posts: int = 6            # newest posts fetched on later scans; the median uses stored history
     refresh_hours: int = 20           # don't re-fetch a creator more often than this

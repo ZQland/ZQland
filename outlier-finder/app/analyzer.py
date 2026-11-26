@@ -203,7 +203,14 @@ class ClaudeAnalyzer:
         except a.APIStatusError as e:
             raise AnalysisError(f"Anthropic API error {e.status_code}: {e.message}") from e
         except a.APIConnectionError as e:
-            raise AnalysisError("Couldn't reach the Anthropic API.") from e
+            # The SDK reports ANY failure while sending or reading as a connection error; name the real cause.
+            cause = e.__cause__
+            detail = f" ({type(cause).__name__}: {cause})" if cause else ""
+            hint = ""
+            if isinstance(cause, TypeError) and "keyword" in str(cause):
+                from .envcheck import environment_problems
+                hint = " " + " ".join(environment_problems())
+            raise AnalysisError(f"Couldn't reach the Anthropic API{detail}.{hint}") from e
 
         if resp.stop_reason == "refusal":
             cat = getattr(getattr(resp, "stop_details", None), "category", None)

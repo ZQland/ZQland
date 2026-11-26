@@ -67,12 +67,15 @@ def list_outliers(cfg: Config, genre: Filter = None, keyword: Filter = None,
         r["source"] = "keyword" if r["keywords"] else "creator"
     if only_qualifying:
         rows = [r for r in rows if r["qualifies"]]
+    _attach_verdicts(cfg, rows)
     if min_outlier:
         rows = [r for r in rows if (r["outlier_score"] or 0) >= min_outlier]
     if max_subs:
         rows = [r for r in rows if r["followers"] is not None and r["followers"] <= max_subs]
     rows.sort(key=SORTS.get(sort, SORTS["outlier"]), reverse=True)
-    return rows[:limit]
+    rows = rows[:limit]
+    _attach_verdicts(cfg, rows)
+    return rows
 
 
 def suggested_creators(cfg: Config, platform: Filter = None, genre: Filter = None, limit: int = 60) -> list[dict]:
@@ -178,7 +181,9 @@ def creator_posts(cfg: Config, channel_id: str, sort: str = "outlier", limit: in
             f"SELECT {_VIDEO_COLS} FROM videos v LEFT JOIN channels c ON c.id = v.channel_id "
             "WHERE v.channel_id = ?", (channel_id,))]
     rows.sort(key=SORTS.get(sort, SORTS["outlier"]), reverse=True)
-    return rows[:limit]
+    rows = rows[:limit]
+    _attach_verdicts(cfg, rows)
+    return rows
 
 
 def keyword_opportunities(cfg: Config, genre: Filter = None, platform: Filter = None) -> list[dict]:
@@ -192,6 +197,32 @@ def keyword_opportunities(cfg: Config, genre: Filter = None, platform: Filter = 
     return [dict(r) for r in rows]
 
 
+def recent_problems(cfg: Config, hours: int = 24) -> list[dict]:
+    """Background jobs that failed or only partly worked recently, newest first, for the site-wide
+    banner. Dismissing the banner hides everything up to that moment."""
+    with connect(cfg.db_path) as conn:
+        row = conn.execute("SELECT value FROM app_state WHERE key = 'alerts_dismissed_at'").fetchone()
+        since = max(_since(hours / 24), row["value"] if row else "")
+        scans = conn.execute(
+            "SELECT id, target, status, message, finished_at FROM scans WHERE status IN ('failed', 'partial') "
+            "AND finished_at > ? ORDER BY finished_at DESC LIMIT 5", (since,)).fetchall()
+        analyses = conn.execute(
+            "SELECT a.video_id, a.error, a.updated_at, v.title FROM analyses a LEFT JOIN videos v ON v.id = a.video_id "
+            "WHERE a.status = 'failed' AND a.updated_at > ? ORDER BY a.updated_at DESC LIMIT 5", (since,)).fetchall()
+    out = [{"at": r["finished_at"], "title": f"Scan #{r['id']} {'failed' if r['status'] == 'failed' else 'partly failed'}"
+                                              f" ({r['target']})",
+            "message": r["message"] or "", "link": "/scans"} for r in scans]
+    out += [{"at": r["updated_at"], "title": f"Analysis failed: {(r['title'] or r['video_id'])[:60]}",
+             "message": r["error"] or "", "link": f"/video/{r['video_id']}"} for r in analyses]
+    return sorted(out, key=lambda a: a["at"], reverse=True)
+
+
+def dismiss_problems(cfg: Config) -> None:
+    with connect(cfg.db_path) as conn:
+        conn.execute("INSERT INTO app_state (key, value) VALUES ('alerts_dismissed_at', ?) "
+                     "ON CONFLICT(key) DO UPDATE SET value = excluded.value", (_since(0),))
+
+
 def recent_scans(cfg: Config, limit: int = 20) -> list[dict]:
     with connect(cfg.db_path) as conn:
         return [dict(r) for r in conn.execute("SELECT * FROM scans ORDER BY id DESC LIMIT ?", (limit,))]
@@ -203,3 +234,44 @@ def summary(cfg: Config) -> dict:
         channels = conn.execute("SELECT COUNT(*) FROM channels").fetchone()[0]
         tracked = conn.execute("SELECT COUNT(*) FROM channels WHERE tracked = 1").fetchone()[0]
     return {"videos": videos, "channels": channels, "tracked": tracked}
+
+
+def _attach_verdicts(cfg: Config, rows: list[dict]) -> None:
+    """Give analyzed videos their overall score and works / doesn't-work counts for the cards."""
+    import json
+    from .verdict import verdict
+    ids = [r["id"] for r in rows if r.get("analysis_status") == "done"]
+    if not ids:
+        return
+    with connect(cfg.db_path) as conn:
+        found = {vid: raw for vid, raw in conn.execute(
+            f"SELECT video_id, breakdown_json FROM analyses WHERE status = 'done' AND video_id IN ({','.join('?' * len(ids))})",
+            ids)}
+    for r in rows:
+        raw = found.get(r["id"])
+        if raw:
+            b = json.loads(raw)
+            vd = verdict(b)
+            r["overall"] = b.get("overall_score")
+            r["n_works"], r["n_fails"] = len(vd["works"]), len(vd["fails"])
+
+
+def list_breakdowns(cfg: Config, sort: str = "newest") -> list[dict]:
+    """Every finished breakdown with its verdict, for the Breakdowns page."""
+    import json
+    from .verdict import verdict
+    sql = f"""SELECT {_VIDEO_COLS}, a.breakdown_json, a.updated_at AS analyzed_at, a.demo AS analysis_demo
+              FROM analyses a JOIN videos v ON v.id = a.video_id LEFT JOIN channels c ON c.id = v.channel_id
+              WHERE a.status = 'done'"""
+    with connect(cfg.db_path) as conn:
+        rows = [dict(r) for r in conn.execute(sql)]
+    out = []
+    for r in rows:
+        b = json.loads(r.pop("breakdown_json") or "{}")
+        r = enrich(r, cfg.settings)
+        r["b"], r["verdict"], r["overall"] = b, verdict(b), b.get("overall_score")
+        out.append(r)
+    keys = {"score": lambda r: r["overall"] or 0, "outlier": lambda r: r["outlier_score"] or 0,
+            "newest": lambda r: r["analyzed_at"] or ""}
+    out.sort(key=keys.get(sort, keys["newest"]), reverse=True)
+    return out

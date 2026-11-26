@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% from "_icons.html" import icon %}
+{% block title %}{{ title }} · Outlier Finder{% endblock %}
+{% block content %}
+<div class="error-page">
+  <span class="tag mono" style="width:max-content">Error {{ status }}</span>
+  <h1>{{ title }}</h1>
+  {% if message %}<p class="err-box">{{ message }}</p>{% endif %}
+  {% if details %}<ul>{% for d in details %}<li>{{ d }}</li>{% endfor %}</ul>{% endif %}
+  <div class="actions"><a class="button" href="javascript:history.back()">{{ icon('back') }} Go back</a> <a class="button ghost" href="/">Discover</a></div>
+</div>
+{% endblock %}

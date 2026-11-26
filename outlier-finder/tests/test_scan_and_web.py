@@ -109,7 +109,7 @@ def test_web_pages_render(cfg, monkeypatch):
 
     vid = queries.list_outliers(cfg, platform="tiktok")[0]["id"]
     detail = web.get(f"/video/{vid}")
-    assert detail.status_code == 200 and "engagement rate" in detail.text and "Analyze this video" in detail.text
+    assert detail.status_code == 200 and "Engagement rate" in detail.text and "Analyze this video" in detail.text
     assert web.get("/video/tiktok:nope").status_code == 404
 
     api = web.get("/api/outliers?limit=5&platform=youtube").json()
@@ -349,6 +349,31 @@ def test_suggestions_bulk_add_genre_and_toggle_via_web(cfg, monkeypatch):
     assert "Wide scan on" in web.get("/scans").text
 
 
+def test_split_handles_accepts_any_separator_and_dedupes():
+    from app.scanner import split_handles
+    pasted = "@a, @b; c | d\n@e@f\thttps://www.tiktok.com/@g/  @A \"h\" (i). x.y"
+    assert split_handles(pasted) == ["@a", "@b", "c", "d", "@e", "@f", "https://www.tiktok.com/@g/", "h", "i", "x.y"]
+    assert split_handles("  \n ,, ") == []
+
+
+def test_bulk_add_skips_creators_already_tracked(cfg):
+    from app.scanner import add_creators
+    tt = Counting("tiktok")
+    add_creators(cfg, start_scan(cfg, "add"), ["@demo_creator_001", "demo_creator_002"], "tiktok", None, {"tiktok": tt})
+    assert len(tt.lookups) == 2
+    tt.lookups.clear()
+    add_creators(cfg, start_scan(cfg, "add"), ["@Demo_Creator_001", "demo_creator_002", "demo_creator_003"],
+                 "tiktok", None, {"tiktok": tt})
+    assert [ids for ids, _ in tt.lookups] == [["tiktok:demo_creator_003"]]  # only the new one is paid for
+    last = queries.recent_scans(cfg, 1)[0]
+    assert last["status"] == "finished", last["message"]
+    assert "2 already tracked, skipped" in last["message"] and "Tracked 1 creators" in last["message"]
+
+    add_creators(cfg, start_scan(cfg, "add"), ["demo_creator_003"], "tiktok", None, {"tiktok": tt})
+    last = queries.recent_scans(cfg, 1)[0]
+    assert last["status"] == "finished" and "1 already tracked" in last["message"]
+
+
 def test_v2_database_is_migrated_without_losing_data(tmp_path):
     import sqlite3
     from app.db import init_db
@@ -376,3 +401,150 @@ def test_v2_database_is_migrated_without_losing_data(tmp_path):
         assert conn.execute("SELECT COUNT(*) FROM videos").fetchone()[0] == 1
         assert conn.execute("SELECT cost_usd FROM scans").fetchone()[0] == 0
         assert conn.execute("PRAGMA user_version").fetchone()[0] == 3
+
+
+# --- errors reach the page ---------------------------------------------------------------------
+
+def test_errors_render_as_pages_and_json(cfg, monkeypatch):
+    import app.main as main
+    monkeypatch.setattr(main, "cfg", cfg)
+    web = TestClient(main.app, raise_server_exceptions=False)
+
+    bad = web.get("/?min_outlier=abc")
+    assert bad.status_code == 422 and "text/html" in bad.headers["content-type"]
+    assert "Min outlier" in bad.text and "abc" in bad.text and "Outlier Finder" in bad.text  # full page, not raw JSON
+    missing = web.get("/video/tiktok:nope")
+    assert missing.status_code == 404 and "Video not found" in missing.text
+    api = web.get("/api/outliers?min_outlier=abc")
+    assert api.status_code == 422 and api.json()["error"]
+
+    def boom(*a, **k):
+        raise RuntimeError("database is locked")
+    monkeypatch.setattr(main.queries, "list_outliers", boom)
+    crash = web.get("/")
+    assert crash.status_code == 500 and "RuntimeError: database is locked" in crash.text
+
+
+def test_failed_jobs_show_in_a_banner_until_dismissed(cfg, monkeypatch):
+    import app.main as main
+    from app.scanner import _finish
+    monkeypatch.setattr(main, "cfg", cfg)
+    web = TestClient(main.app)
+    assert "recent problem" not in web.get("/").text
+    _finish(cfg, start_scan(cfg, "add 1 creator"), "failed", 0, "instagram: Apify paused: budget used up")
+    with connect(cfg.db_path) as conn:
+        conn.execute("INSERT INTO videos (id, platform, title) VALUES ('tiktok:1', 'tiktok', 'A video')")
+        conn.execute("INSERT INTO analyses (video_id, status, error, updated_at) VALUES "
+                     "('tiktok:1', 'failed', 'Couldn''t download this video', strftime('%Y-%m-%dT%H:%M:%SZ','now'))")
+    page = web.get("/creators").text
+    assert "2 recent problems" in page and "Apify paused: budget used up" in page
+    assert 'href="/video/tiktok:1"' in page and "download this video" in page
+    web.post("/alerts/dismiss", data={"back": "/creators"})
+    assert "recent problem" not in web.get("/").text
+
+
+def test_paused_badge_when_apify_budget_is_used_up(cfg, monkeypatch):
+    import app.main as main
+    from app import budget
+    monkeypatch.setattr(main, "cfg", cfg)
+    cfg.apify_token = "tok"
+    monkeypatch.setattr(budget, "apify_month", lambda *a, **k: {"used": 12.57, "account_limit": 10.0,
+                                                                 "resets": "2026-12-11"})
+    page = TestClient(main.app).get("/").text
+    # demo providers (no real token in tests) are never shown as paused; the reason is computed
+    assert budget.apify_paused(cfg).startswith("Apify budget used up: $12.57")
+    assert page  # renders
+
+
+def test_video_download_prefers_free_sources_and_explains_failure(cfg, tmp_path, monkeypatch):
+    from app import media, pipeline
+    from app.budget import BudgetExceeded
+    tried = []
+    monkeypatch.setattr(media, "download", lambda url, dest, token=None: tried.append(("link", url)) or (_ for _ in ()).throw(
+        media.MediaError("Download failed with HTTP 403 (the link may have expired).")))
+    monkeypatch.setattr(media, "ytdlp_available", lambda: True)
+    monkeypatch.setattr(media, "download_youtube", lambda url, dest: tried.append(("yt-dlp", url)) or dest)
+
+    class Prov:
+        def refresh_media_url(self, post):
+            raise AssertionError("Apify must not be used when yt-dlp works")
+
+    v = {"id": "tiktok:9", "platform": "tiktok", "channel_id": "tiktok:x", "title": "", "published_at": None,
+         "duration_s": 10, "views": 1, "url": "https://www.tiktok.com/@x/video/9", "media_url": "https://cdn/old.mp4"}
+    assert pipeline.get_video_file(cfg, v, tmp_path, Prov()) == tmp_path / "video.mp4"
+    assert [t[0] for t in tried] == ["link", "yt-dlp"]
+
+    class Paused:
+        def refresh_media_url(self, post):
+            raise BudgetExceeded("Apify paused: budget used up.")
+    monkeypatch.setattr(media, "ytdlp_available", lambda: False)
+    with pytest.raises(media.MediaError) as e:
+        pipeline.get_video_file(cfg, v, tmp_path, Paused())
+    msg = str(e.value)
+    assert "link may have expired" in msg and "Apify paused" in msg and "Upload the video file" in msg
+    assert "pip install yt-dlp" in msg
+
+
+def test_apify_storage_links_get_the_token_and_nothing_else_does(tmp_path, monkeypatch):
+    import httpx
+    from app import media
+    seen = []
+
+    def handler(req):
+        seen.append((req.url.host, req.headers.get("authorization")))
+        if req.url.host == "api.apify.com" and not req.headers.get("authorization"):
+            return httpx.Response(403, json={"error": {"type": "insufficient-permissions"}})
+        return httpx.Response(200, content=b"mp4")
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    monkeypatch.setattr(media.httpx, "stream", lambda method, url, headers=None, **k: client.stream(
+        method, url, headers=headers))
+    kv = "https://api.apify.com/v2/key-value-stores/abc/records/video.mp4"
+    assert media.download(kv, tmp_path / "a.mp4", "tok").read_bytes() == b"mp4"
+    media.download("https://v16.tiktokcdn.com/x.mp4", tmp_path / "b.mp4", "tok")
+    assert seen == [("api.apify.com", "Bearer tok"), ("v16.tiktokcdn.com", None)]  # token never leaves Apify
+    with pytest.raises(media.MediaError, match="private and needs APIFY_TOKEN"):
+        media.download(kv, tmp_path / "c.mp4", None)
+
+
+def test_unreachable_instagram_edge_host_falls_back_to_global_host(tmp_path, monkeypatch):
+    import httpx
+    from app import media
+    seen = []
+
+    def fake_stream(url, dest, headers, private):
+        seen.append(httpx.URL(url).host)
+        if httpx.URL(url).host != "scontent.cdninstagram.com":
+            raise httpx.ConnectError("[Errno 8] nodename nor servname provided, or not known")
+        dest.write_bytes(b"mp4")
+        return dest
+
+    monkeypatch.setattr(media, "_stream_to", fake_stream)
+    out = media.download("https://instagram.ftpa1-2.fna.fbcdn.net/o1/v/x.mp4?oh=sig", tmp_path / "v.mp4")
+    assert out.read_bytes() == b"mp4" and seen == ["instagram.ftpa1-2.fna.fbcdn.net", "scontent.cdninstagram.com"]
+
+    with pytest.raises(media.MediaError, match="can't look up v16.tiktokcdn.com"):  # no fallback: a plain message
+        media.download("https://v16.tiktokcdn.com/x.mp4", tmp_path / "t.mp4")
+
+
+def test_thumbnails_are_saved_once_and_expired_links_are_not_retried(tmp_path, monkeypatch):
+    import httpx
+    from app import media
+    calls = []
+
+    def fake_get(url, **kw):
+        calls.append(url)
+        if "expired" in url:
+            return httpx.Response(403, text="URL signature expired")
+        return httpx.Response(200, content=b"\xff\xd8jpg", headers={"content-type": "image/jpeg"})
+
+    monkeypatch.setattr(media.httpx, "get", fake_get)
+    p = media.cache_thumbnail(tmp_path, "instagram:abc", "https://scontent-icn2-1.cdninstagram.com/t.jpg")
+    assert p and p.read_bytes() == b"\xff\xd8jpg"
+    assert media.cache_thumbnail(tmp_path, "instagram:abc", "https://x/t.jpg") == p and len(calls) == 1  # from disk
+
+    assert media.cache_thumbnail(tmp_path, "instagram:old", "https://scontent-icn2-1.cdninstagram.com/expired.jpg") is None
+    n = len(calls)
+    assert media.cache_thumbnail(tmp_path, "instagram:old", "https://scontent-icn2-1.cdninstagram.com/expired.jpg") is None
+    assert len(calls) == n  # marked as missing: no request on every page view
+    p2 = media.cache_thumbnail(tmp_path, "instagram:old", "https://scontent-icn2-1.cdninstagram.com/fresh.jpg")
+    assert p2 and len(calls) == n + 1  # a rescan's new link is tried straight away

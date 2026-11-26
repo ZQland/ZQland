@@ -18,8 +18,9 @@ platforms:
 
 # Apify spending guards (TikTok + Instagram scrapers bill per post fetched, ~$0.003-0.004 each).
 apify:
-  monthly_budget_usd: 5.0    # stop starting Apify runs once this month's usage reaches this
+  monthly_budget_usd: 19.0   # matches the $19 limit set on Apify (pay as you go), 2026-11-12
   max_usd_per_scan: 1.0      # one scan never spends more than this (Apify enforces it), split across platforms
+  max_usd_per_import: 3.0    # one bulk 'add creators' job never spends more than this per platform (~54 new creators)
   baseline_posts: 15         # posts fetched the first time a creator is looked up (for their median)
   refresh_posts: 6           # newest posts fetched on later scans; the median uses stored history
   refresh_hours: 20          # don't re-check a creator more often than this

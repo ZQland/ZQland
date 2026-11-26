@@ -9,6 +9,7 @@ from pathlib import Path
 
 from . import media
 from .analyzer import AnalysisError, ClaudeAnalyzer, FakeAnalyzer
+from .budget import BudgetExceeded
 from .config import Config
 from .db import connect
 from .models import Post
@@ -60,16 +61,39 @@ def get_video_file(cfg: Config, v: dict, workdir: Path, provider=None) -> Path:
         raise media.MediaError("Downloads are turned off (analysis.allow_downloads). Upload the file instead.")
     if v["platform"] == "youtube":
         return media.download_youtube(v["url"] or f"https://www.youtube.com/shorts/{v['id'].split(':', 1)[1]}", dest)
-    if v.get("media_url"):
+    errors = []
+    if v.get("media_url"):  # free: the link stored when the post was scraped (expires after a while)
         try:
-            return media.download(v["media_url"], dest)
-        except media.MediaError:
-            log.info("stored media URL failed for %s; asking the provider for a fresh one", v["id"])
+            return media.download(v["media_url"], dest, cfg.apify_token)
+        except media.MediaError as e:
+            errors.append(f"stored link: {e}")
+    if v.get("url") and media.ytdlp_available():  # free: yt-dlp reads the public post page
+        try:
+            return media.download_youtube(v["url"], dest)
+        except media.MediaError as e:
+            errors.append(f"yt-dlp: {e}")
     prov = provider or source_for(cfg, v["platform"]).provider
-    fresh = prov.refresh_media_url(_post_from_row(v)) if prov else None
-    if not fresh:
-        raise media.MediaError("Couldn't get a download link for this video. Upload the file on this page instead.")
-    return media.download(fresh, dest)
+    try:  # paid: ask the scraper for a fresh link (an Apify run, within the budget)
+        fresh = prov.refresh_media_url(_post_from_row(v)) if prov else None
+    except BudgetExceeded as e:
+        errors.append(str(e))
+        fresh = None
+    if fresh:
+        with connect(cfg.db_path) as conn:  # paid for: keep it, so a retry downloads it again for free
+            conn.execute("UPDATE videos SET media_url = ? WHERE id = ?", (fresh, v["id"]))
+        try:
+            return media.download(fresh, dest, cfg.apify_token)
+        except media.MediaError as e:
+            errors.append(f"fresh link: {e}")
+    tips = "Upload the video file on this page" + ("" if media.ytdlp_available() else
+                                                   ", or install yt-dlp (pip install yt-dlp) for free downloads")
+    raise media.MediaError(f"Couldn't download this video ({'; '.join(errors) or 'no download link'}). {tips}.")
+
+
+# (step value written to the analyses table, label shown on the progress stepper)
+ANALYSIS_STEPS = [("waiting", "Queued"), ("getting the video file", "Getting the video"),
+                  ("measuring edits", "Measuring cuts and pacing"), ("transcribing", "Transcribing speech"),
+                  ("analyzing with Claude", "Writing the breakdown")]
 
 
 def run_analysis(cfg: Config, video_id: str, upload: Path | None = None,

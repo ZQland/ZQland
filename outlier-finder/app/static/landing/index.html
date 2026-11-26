@@ -1,0 +1,456 @@
+<!doctype html>
+<html lang="en" data-type="software" data-radius="soft" data-ground="sky" data-buttons="arrow" data-motion>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Outlier Finder: outlier videos and their breakdowns for short-form creators</title>
+<meta name="description" content="Tracks TikTok, YouTube Shorts and Instagram Reels creators, flags videos far above each creator's median views, and has Claude explain the hook, script and edit.">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Outlier Finder: outlier videos for short-form creators">
+<meta property="og:description" content="Find the videos that beat their creator's median views, then read why they worked.">
+<meta property="og:image" content="share.jpg">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<meta name="theme-color" content="#eef0f3">
+<!-- <link rel="canonical" href="https://[domain to come]/"> -->
+<meta name="site-kind" content="software">
+<meta name="page-type" content="software">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400..700&family=JetBrains+Mono:wght@400..500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/system.css">
+<link rel="stylesheet" href="assets/ui/cards.css">
+<link rel="stylesheet" href="assets/motion/motion.css">
+<link rel="stylesheet" href="assets/backgrounds/backgrounds.css">
+<link rel="stylesheet" href="assets/layout/layout.css">
+<link rel="stylesheet" href="assets/icons/icon.css">
+<style>
+:root {
+  --p-bg: #eef0f3; --p-surface: #e2e5ea; --p-ink: #0b0c0e; --p-muted: #5d6470;
+  --p-accent: #1f2de6; --p-accent-ink: #ffffff; --p-action: #1f2de6; --p-action-ink: #ffffff;
+  --p-inv-bg: #0b0c0e; --p-inv-surface: #17181a; --p-inv-ink: #eef0f3; --p-inv-muted: #8e8f92;
+  --p-inv-accent: #eef0f3; --p-inv-accent-ink: #0b0c0e; --p-inv-action: #eef0f3; --p-inv-action-ink: #0b0c0e;
+  --font-display: "Manrope", system-ui, sans-serif;
+  --font-text: "Manrope", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  --display-weight: 500;
+  --display-tracking: -0.035em;
+  --display-tracking-xl: -0.045em;
+  --ly-scale: 0.97;
+}
+</style>
+<link rel="stylesheet" href="assets/ui/base.css">
+<link rel="stylesheet" href="assets/ui/window/fragment.css">
+<link rel="stylesheet" href="assets/layout/demo.css">
+<script>document.documentElement.classList.add('m-enter');setTimeout(()=>document.documentElement.classList.add('m-enter-done'),700)</script>
+<script src="assets/backgrounds/backgrounds.js"></script>
+<script>document.documentElement.classList.add('mo-js');setTimeout(()=>document.documentElement.classList.add('mo-safe'),2500)</script>
+<link rel="modulepreload" href="assets/moments/moments.js">
+<link rel="modulepreload" href="assets/moments/lib.js">
+<link rel="modulepreload" href="assets/moments/liquid-type/moment.js">
+<!-- page CSS: only what sits inside a visual, and one --p-h per card group -->
+<style>
+/* the hero's lit ground: the page's cool grey with one soft light */
+.hero__art { background:
+    radial-gradient(70% 60% at 18% 12%, color-mix(in oklab, var(--p-surface) 70%, white), transparent 70%),
+    radial-gradient(60% 50% at 90% 100%, color-mix(in oklab, var(--p-bg) 82%, var(--p-accent)), transparent 70%),
+    var(--p-surface); }
+.hero__art > .ly-piece--note { left: var(--s-6); bottom: var(--s-6); width: 300px; z-index: 2; }
+.hero__proof { font-size: var(--t-small); color: var(--ink); }
+.d-note__line { display: flex; align-items: center; gap: 10px; padding: 7px 0; font-size: 13px; color: #3d4247; border-top: 1px solid rgb(0 0 0 / .06); }
+.d-note__line:first-of-type { border-top: 0; }
+.d-note__line i { width: 18px; height: 18px; border-radius: 50%; flex: none; display: grid; place-items: center; background: #e6e8fd; color: #1f2de6; font-style: normal; font-size: 12px; font-weight: 600; }
+.d-note__line b { font-weight: 500; color: #16181a; }
+/* the outliers list in the hero window: platform mark, title, views, score */
+.ly-piece--main .d-row { grid-template-columns: 28px minmax(0, 1fr) 64px 72px; }
+.ly-piece--main .d-main { padding-right: var(--ly-cut-room); }
+.ly-piece--main .d-row small, .ly-piece--main .d-row b { white-space: normal; }
+@media (max-width: 1023px) { .ly-piece--main .d-row:nth-child(n+6) { display: none; } }
+.d-row .d-plat { width: 28px; height: 28px; border-radius: 8px; background: #f3f4f6; display: grid; place-items: center; }
+.d-row .d-plat img { width: 16px; height: 16px; }
+.d-score { font: 500 13px/1 var(--font-mono); text-align: right; color: #16181a; }
+.d-score.is-top { color: #1f2de6; }
+@media (max-width: 1279px) { .ly-piece--main .d-btn, .ly-piece--main .d-row .num { display: none; } .ly-piece--main .d-row { grid-template-columns: 28px minmax(0, 1fr) 64px; } }
+@media (min-width: 1024px) and (max-width: 1279px) { .hero .btn--secondary { display: none; } }
+@media (max-width: 639px) { .ly-piece--main .d-main { padding-right: 32px; } .ly-piece--main .d-row { grid-template-columns: 28px minmax(0, 1fr) 56px; } .ly-piece--main .d-row .num { display: none; } }
+
+/* app-frame (sections-library.md, app-frame) */
+.app.ui { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); margin-top: var(--s-7); background: var(--u-bg); border: 1px solid var(--u-border); border-radius: var(--u-r); box-shadow: var(--u-shadow); }
+.app > .app__pane { position: relative; min-width: 0; min-height: 0; overflow: hidden; }
+.app > .app__pane + .app__pane { border-left: 1px solid var(--u-line); }
+.app > .app__pane > .ui-panel { width: 100%; border: 0; border-radius: 0; box-shadow: none; }
+.app > .app__pane::after { content: ""; position: absolute; inset: auto 0 0 0; height: 64px; background: linear-gradient(transparent, var(--u-bg)); pointer-events: none; }
+@media (min-width: 1024px) and (max-width: 1279px) { .app.ui { grid-template-columns: minmax(0, 4fr) minmax(0, 8fr); } }
+@media (max-width: 1023px) {
+  .app.ui { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+  .app > .app__pane--list { max-height: 252px; }
+  .app > .app__pane--list::after { display: none; }
+  .app .ui-win__side { display: none; }
+  .app .ui-win__body { grid-template-columns: minmax(0, 1fr); }
+  .app > .app__pane + .app__pane { border-left: 0; border-top: 1px solid var(--u-line); }
+}
+@media (max-width: 639px) {
+  .app.ui { grid-template-rows: minmax(0, 1fr); }
+  .app > .app__pane--list { display: none; }
+  .app > .app__pane + .app__pane { border-top: 0; }
+}
+.app .ui-avatar img { width: 14px; height: 14px; }
+.app .ui-avatar { background: #f3f4f6; }
+/* the open breakdown, drawn from the app's own video page */
+.bd { padding: 20px 24px 0; font: 400 13px/1.45 var(--font-text); color: #16181a; }
+.bd__head { display: flex; align-items: baseline; gap: 12px; padding-bottom: 14px; border-bottom: 1px solid var(--u-line); }
+.bd__head b { font-weight: 500; font-size: 15px; }
+.bd__head span { color: #5d6268; }
+.bd__score { margin-left: auto; font: 500 13px/1 var(--font-mono); color: #1f2de6; }
+.bd__nav { display: flex; gap: 16px; padding: 10px 0; color: #5d6268; border-bottom: 1px solid var(--u-line); }
+.bd__nav b { font-weight: 500; color: #16181a; box-shadow: inset 0 -2px 0 #16181a; padding-bottom: 8px; margin-bottom: -11px; }
+.bd__tl { display: flex; gap: 2px; height: 8px; margin: 16px 0 6px; border-radius: 4px; overflow: hidden; }
+.bd__tl i { display: block; background: #c9cdf9; }
+.bd__tl i:first-child { background: #1f2de6; }
+.bd__beats { list-style: none; margin: 0; padding: 0; }
+.bd__beats li { display: grid; grid-template-columns: 56px 92px minmax(0, 1fr); gap: 12px; padding: 11px 0; border-bottom: 1px solid var(--u-line); }
+.bd__beats time { font: 400 12px/1.6 var(--font-mono); color: #5d6268; }
+.bd__beats em { font-style: normal; font-size: 12px; justify-self: start; padding: 1px 8px; border-radius: 999px; background: #eef0f3; height: fit-content; }
+.bd__beats li:first-child em { background: #e6e8fd; color: #1f2de6; }
+.bd__beats q { quotes: "“" "”"; }
+.bd__beats small { display: block; color: #5d6268; font-size: 12px; margin-top: 2px; }
+@media (max-width: 639px) { .bd { padding: 16px 16px 0; } .bd__beats li { grid-template-columns: 48px minmax(0, 1fr); } .bd__beats em { grid-column: 2; } .bd__beats li > span { grid-column: 2; } .bd__nav span:nth-child(n+4) { display: none; } }
+
+/* steps: three cards, each a panel on the lit ground with one small card from the app */
+#how .panel { --p-h: 260px; background:
+    radial-gradient(80% 70% at 20% 0%, color-mix(in oklab, var(--p-surface) 60%, white), transparent 70%),
+    var(--p-surface); }
+#how .d-card { box-shadow: 0 0 0 1px rgb(0 0 0 / .06), 0 14px 32px -18px rgb(0 0 0 / .35); }
+#how .d-note__line:first-of-type { border-top: 1px solid rgb(0 0 0 / .06); }
+#how .stage > .at-rise { --ax: 24px; --ay: 32px; --fit-max: 300px; }
+#how .grid > .card { grid-column: 1 / -1; }
+@media (min-width: 1024px) { #how .grid > .card { grid-column: auto / span 4; } }
+.d-handles { margin: 8px 0 0; padding: 10px 12px; border-radius: 8px; background: #f5f6f8; font: 400 12px/1.7 var(--font-mono); color: #3d4247; }
+.d-prog { height: 6px; border-radius: 3px; background: #eef0f3; overflow: hidden; margin: 10px 0 4px; }
+.d-prog i { display: block; height: 100%; width: 62%; background: #1f2de6; }
+@media (max-width: 639px) { #how { --hm: 2; } #how .panel { --p-h: 290px; } #how .d-note__line:nth-of-type(n+3) { display: none; } }
+@media (min-width: 640px) and (max-width: 1023px) {
+  #how .card { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-auto-rows: min-content; column-gap: var(--s-6); align-content: start; }
+  #how .card > :not(.panel) { grid-column: 1; }
+  #how .card > .panel { grid-column: 2; grid-row: 1 / span 4; --p-h: 200px; }
+}
+
+/* the statement: one headline set large */
+#outliers .mo-lt__type { font: var(--display-weight) clamp(56px, 12vw, 136px)/0.98 var(--font-display); letter-spacing: var(--display-tracking-xl); margin: 0; max-width: 11ch; }
+#outliers .statement__body { margin-top: var(--s-8); max-width: 34rem; font-size: var(--t-lead); line-height: 1.5; }
+#outliers .statement__marks { display: flex; gap: var(--s-5); margin-top: var(--s-7); align-items: center; }
+#outliers .statement__marks img { width: 32px; height: 32px; }
+@media (max-width: 639px) { #questions .span-5 > p { display: none; } #questions .faq__item:nth-child(4), #questions .faq__item:nth-child(6) { display: none; } }
+#outliers .statement__facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--s-5); margin: var(--s-8) 0 0; }
+#outliers .statement__facts dt { font-size: var(--t-label); font-weight: 500; color: var(--muted); }
+#outliers .statement__facts dd { margin: var(--s-2) 0 0; font-size: var(--t-body); }
+@media (max-width: 639px) { #outliers .statement__facts { grid-template-columns: minmax(0, 1fr); gap: var(--s-4); } }
+@media (min-width: 640px) and (max-width: 1023px) { #outliers .statement__facts { grid-template-columns: minmax(0, 1fr); gap: var(--s-6); max-width: 34rem; } #outliers .statement__facts dd { font-size: var(--t-lead); } }
+
+/* costs: rows with the real marks */
+.rows--cost > li { align-items: center; padding-block: var(--s-5); }
+.rows--cost > li > div { grid-column: 1; grid-row: 1; display: flex; align-items: center; gap: var(--s-4); }
+.rows--cost > li > .rows__value { grid-column: 2; grid-row: 1; }
+.rows--cost img { width: 32px; height: 32px; }
+.rows--cost .rows__name { font-size: var(--t-card); font-weight: 500; }
+.rows--cost p { margin: 2px 0 0; }
+.rows--cost .rows__value { font-size: var(--t-card); font-weight: 500; }
+@media (max-width: 639px) { .rows--cost > li { grid-template-columns: 32px minmax(0, 1fr); padding-block: var(--s-3); } .rows--cost > li > .rows__value { grid-column: 2; grid-row: 2; text-align: left; font-size: 16px; } .rows--cost p { display: none; } }
+
+/* costs: the Scans page on the lit ground */
+.costs__art { position: relative; border-radius: var(--r-lg); overflow: hidden; padding: var(--s-7) 0 var(--s-7) var(--s-7); background:
+    radial-gradient(70% 60% at 18% 12%, color-mix(in oklab, var(--p-surface) 70%, white), transparent 70%),
+    radial-gradient(60% 50% at 90% 100%, color-mix(in oklab, var(--p-bg) 82%, var(--p-accent)), transparent 70%),
+    var(--p-surface); }
+.scans { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.scans__body { padding: 20px 24px 8px; }
+.scans__budget p { margin: 8px 0 0; font-size: 13px; color: #5d6268; }
+.scans__list { list-style: none; margin: 16px 0 0; padding: 0; }
+.scans__list li { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 12px; padding: 12px 0; border-top: 1px solid rgb(0 0 0 / .07); font-size: 13px; }
+.scans__list b { font-weight: 500; }
+.scans__list span { grid-column: 1; color: #5d6268; font-size: 12px; }
+.scans__list em { grid-column: 2; grid-row: 1 / span 2; align-self: center; font: 500 13px/1 var(--font-mono); font-style: normal; }
+.rows--cost { margin-top: var(--s-7); }
+@media (max-width: 639px) { .costs__art { display: none; } .rows--cost > li { grid-template-columns: minmax(0, 1fr); padding-block: var(--s-3); } .rows--cost > li > .rows__value { grid-column: 1; grid-row: 2; text-align: left; font-size: 16px; } .rows--cost img { width: 24px; height: 24px; } .rows--cost > li:nth-child(4) { display: none; } }
+@media (min-width: 640px) and (max-width: 1023px) { .costs__art { margin-top: var(--s-6); padding: var(--s-5) 0 var(--s-5) var(--s-5); } .scans__budget p { display: none; } .scans__list li:nth-child(n+3) { display: none; } }
+@media (min-width: 640px) and (max-width: 1023px) { .closing__links .grid > div { grid-column: span 3; } .closing__links .grid > .stack-4, .closing__links .grid > .footer__col:nth-child(2) { grid-column: 1 / -1; } .closing__links .footer__col:nth-child(2) ul { display: flex; flex-wrap: wrap; gap: var(--s-5); } }
+@media (max-width: 639px) { .footer__lede { display: none; } }
+/* at 320 the bar holds the name and the menu only; the hero carries the main action */
+@media (max-width: 379px) { .nav:not(.is-open) .nav__actions { display: none; } .nav:not(.is-open) .nav__toggle { margin-left: auto; } }
+</style>
+</head>
+<body>
+<!-- type: software (an app people run on their own machine)
+     deal: hero collage, nav nav-centre (dealt nav-cards; no photographs to show, so dealt again from its list), close close-type,
+     footer footer-columns, rhythm space, buttons arrow, mark stack, palette cool-grey-cobalt, type manrope, ground sky
+     moments: liquid-type on #outliers (dealt iris-opens first: it needs a second ground, and the rhythm "space" keeps one) -->
+<header class="nav nav--centre">
+  <div class="wrap nav__bar">
+    <a class="skip-link" href="#top">Skip to content</a>
+    <a class="nav__logo" href="#top"><span class="mark" data-mark="stack" aria-hidden="true"></span>Outlier Finder</a>
+    <nav class="nav__links" aria-label="Main">
+      <div class="nav__item"><a class="nav__link" href="#product">Product</a></div>
+      <div class="nav__item"><a class="nav__link" href="#how">Steps</a></div>
+      <div class="nav__item"><a class="nav__link" href="#questions">Questions</a></div>
+      <div class="nav__item"><a class="nav__link" href="#costs">Costs</a></div>
+    </nav>
+    <div class="nav__actions">
+      <a class="btn btn--primary" href="/">See the outliers<svg class="m-arrow" viewBox="0 0 12 12" aria-hidden="true"><path class="m-arrow__stem" d="M1 6h8"/><path class="m-arrow__head" d="M4.5 2.5 8 6l-3.5 3.5"/></svg></a>
+    </div>
+    <button class="nav__toggle" type="button" aria-expanded="false" aria-label="Menu">
+      <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><path d="M2 5h14M2 13h14" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+    </button>
+  </div>
+</header>
+<main id="top">
+  <section class="hero hero--collage" data-enter aria-labelledby="hero-h">
+    <div class="wrap"><div class="hero-text grid hero__grid">
+      <div class="hero__text span-5">
+        <h1 id="hero-h">Outlier video finder for short‑form creators</h1>
+        <p class="hero__lead">It checks the creators you track on TikTok, YouTube Shorts and Instagram Reels, flags videos far above each creator’s median views, and has Claude explain why.</p>
+        <div class="btn-row"><a class="btn btn--primary" href="/">See the outliers<svg class="m-arrow" viewBox="0 0 12 12" aria-hidden="true"><path class="m-arrow__stem" d="M1 6h8"/><path class="m-arrow__head" d="M4.5 2.5 8 6l-3.5 3.5"/></svg></a><a class="btn btn--secondary" href="#how">Read the steps</a></div>
+        <p class="hero__proof">Runs on your own machine. Checking a creator you already track costs about $0.02.</p>
+      </div>
+      <div class="hero__art span-6 start-7" role="img" aria-label="Outlier Finder's list of outlier videos, top score 38 times the creator's median, and a finished breakdown of that video">
+        <div class="ly-piece ly-piece--main d-win" aria-hidden="true">
+          <div class="d-win__bar"><span class="d-win__dots"><i></i><i></i><i></i></span><span>Outlier Finder · Outliers</span></div>
+          <div class="d-win__body">
+            <div class="d-side">
+              <span class="is-on"><i></i>Outliers</span><span><i></i>Opportunities</span><span><i></i>Creators</span><span><i></i>Scans</span>
+              <span class="d-side__label">Genres</span><span><i></i>Fitness</span><span><i></i>Cooking</span><span><i></i>Personal finance</span>
+            </div>
+            <div class="d-main">
+              <div class="d-main__head"><h4>Outliers</h4><span class="d-btn">Scan all</span></div>
+              <div class="d-tabs"><span class="is-on">All 212</span><span>TikTok 96</span><span>Shorts 71</span><span>Reels 45</span></div>
+              <div class="d-rows">
+                <div class="d-row"><span class="d-plat"><img width="32" height="32" loading="lazy" src="assets/icons/tiktok.svg" alt=""></span><div><b>One pan, three dinners</b><small>Cooking · median 41k</small></div><span class="num">1.6M</span><span class="d-score is-top">38.2×</span></div>
+                <div class="d-row"><span class="d-plat"><img width="32" height="32" loading="lazy" src="assets/icons/youtube.svg" alt=""></span><div><b>Squat mistakes, filmed</b><small>Fitness · median 12k</small></div><span class="num">318k</span><span class="d-score">26.5×</span></div>
+                <div class="d-row"><span class="d-plat"><img width="32" height="32" loading="lazy" src="assets/icons/instagram.svg" alt=""></span><div><b>$50 of groceries, cooked</b><small>Cooking · median 9.4k</small></div><span class="num">204k</span><span class="d-score">21.7×</span></div>
+                <div class="d-row"><span class="d-plat"><img width="32" height="32" loading="lazy" src="assets/icons/tiktok.svg" alt=""></span><div><b>I paid off $14k in a year</b><small>Finance · median 22k</small></div><span class="num">390k</span><span class="d-score">17.7×</span></div>
+                <div class="d-row"><span class="d-plat"><img width="32" height="32" loading="lazy" src="assets/icons/youtube.svg" alt=""></span><div><b>Ten-minute mobility, no mat</b><small>Fitness · median 30k</small></div><span class="num">412k</span><span class="d-score">13.7×</span></div>
+                <div class="d-row"><span class="d-plat"><img width="32" height="32" loading="lazy" src="assets/icons/instagram.svg" alt=""></span><div><b>Rice cooker bread, tested</b><small>Cooking · median 15k</small></div><span class="num">171k</span><span class="d-score">11.4×</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="ly-piece ly-piece--note d-card" aria-hidden="true" data-ly-steps="700">
+          <div class="d-card__row"><h5>Breakdown, 38.2× video</h5><span class="d-chip" data-step data-step-at="4">Ready</span></div>
+          <div class="d-note__line" data-step><i>1</i><span><b>23 cuts</b>, 2.4 s a shot</span></div>
+          <div class="d-note__line" data-step><i>2</i><span><b>168 words</b> a minute, first at 0.3 s</span></div>
+          <div class="d-note__line" data-step><i>3</i><span>Hook, <b>7 beats</b>, a script template</span></div>
+        </div>
+      </div>
+    </div></div>
+  </section>
+
+  <section class="section" id="product" aria-labelledby="product-h">
+    <div class="wrap">
+      <div class="grid">
+        <h2 id="product-h" class="span-5">Every outlier, broken down beside the list</h2>
+        <p class="span-6 start-7">Pick a video from the list. Its page leads with the hook, then each beat of the script with its timestamp, then the edit pace, retention moves and ten scores.</p>
+      </div>
+      <div class="ui app fill" role="img" aria-label="The outliers list beside the breakdown of a cooking video: its hook and the timestamped beats of its script" data-ui-pause-host>
+        <div class="app__pane app__pane--list">
+          <div class="ui ui-panel ui-win" data-ui="window" data-open="New" data-work="Analyzing" data-done="Ready">
+            <div class="ui-win__bar">
+              <span class="ui-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+              <span class="ui-win__crumb">Outliers <i>/</i> <b>Cooking</b></span>
+              <span class="ui-spacer"></span>
+              <span class="ui-win__search" aria-hidden="true"><svg class="ui-icon" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3 3"/></svg><span class="ui-win__ph">Keyword</span></span>
+            </div>
+            <div class="ui-win__body">
+              <nav class="ui-win__side" aria-hidden="true">
+                <span class="ui-win__nav is-on">Outliers<em>212</em></span>
+                <span class="ui-win__nav">Creators<em>48</em></span>
+                <span class="ui-win__nav">Scans</span>
+                <span class="ui-win__label">Genres</span>
+                <span class="ui-win__nav"><span class="ui-win__hash">#</span>Cooking</span>
+                <span class="ui-win__nav"><span class="ui-win__hash">#</span>Fitness</span>
+              </nav>
+              <div class="ui-win__main">
+                <div class="ui-win__cols" aria-hidden="true"><span>Video</span><span>Views, score</span><span>Breakdown</span><span>Age</span></div>
+                <ul class="ui-win__rows">
+                  <li class="ui-win__row" data-row><span class="ui-avatar"><img width="32" height="32" loading="lazy" src="assets/icons/tiktok.svg" alt=""></span><span class="ui-win__who">Three meals for the week, one pan</span><span class="ui-win__sub">1.6M views · 38.2×</span><span class="ui-win__st is-done" data-st>Ready</span><span class="ui-win__age">2d</span></li>
+                  <li class="ui-win__row" data-row><span class="ui-avatar"><img width="32" height="32" loading="lazy" src="assets/icons/instagram.svg" alt=""></span><span class="ui-win__who">What $50 of groceries gets you</span><span class="ui-win__sub">204k views · 21.7×</span><span class="ui-win__st" data-st>New</span><span class="ui-win__age">3d</span></li>
+                  <li class="ui-win__row" data-row><span class="ui-avatar"><img width="32" height="32" loading="lazy" src="assets/icons/instagram.svg" alt=""></span><span class="ui-win__who">Rice cooker bread, tested</span><span class="ui-win__sub">171k views · 11.4×</span><span class="ui-win__st" data-st>New</span><span class="ui-win__age">4d</span></li>
+                  <li class="ui-win__row" data-row><span class="ui-avatar"><img width="32" height="32" loading="lazy" src="assets/icons/youtube.svg" alt=""></span><span class="ui-win__who">Knife skills in 40 seconds</span><span class="ui-win__sub">96k views · 9.8×</span><span class="ui-win__st is-done" data-st>Ready</span><span class="ui-win__age">5d</span></li>
+                  <li class="ui-win__row" data-row><span class="ui-avatar"><img width="32" height="32" loading="lazy" src="assets/icons/tiktok.svg" alt=""></span><span class="ui-win__who">Dinner for two under $8</span><span class="ui-win__sub">240k views · 8.1×</span><span class="ui-win__st" data-st>New</span><span class="ui-win__age">6d</span></li>
+                  <li class="ui-win__row" data-row><span class="ui-avatar"><img width="32" height="32" loading="lazy" src="assets/icons/youtube.svg" alt=""></span><span class="ui-win__who">Why your pasta goes gummy</span><span class="ui-win__sub">58k views · 7.3×</span><span class="ui-win__st" data-st>New</span><span class="ui-win__age">6d</span></li>
+                  <li class="ui-win__row" data-row><span class="ui-avatar"><img width="32" height="32" loading="lazy" src="assets/icons/tiktok.svg" alt=""></span><span class="ui-win__who">Freezer burritos, a month in</span><span class="ui-win__sub">133k views · 6.6×</span><span class="ui-win__st" data-st>New</span><span class="ui-win__age">8d</span></li>
+                  <li class="ui-win__row" data-row><span class="ui-avatar"><img width="32" height="32" loading="lazy" src="assets/icons/instagram.svg" alt=""></span><span class="ui-win__who">One sauce, five dinners</span><span class="ui-win__sub">61k views · 6.2×</span><span class="ui-win__st" data-st>New</span><span class="ui-win__age">9d</span></li>
+                  <li class="ui-win__row" data-row><span class="ui-avatar"><img width="32" height="32" loading="lazy" src="assets/icons/youtube.svg" alt=""></span><span class="ui-win__who">Cheap protein, ranked</span><span class="ui-win__sub">44k views · 5.4×</span><span class="ui-win__st" data-st>New</span><span class="ui-win__age">11d</span></li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="app__pane app__pane--open">
+          <div class="ui ui-panel bd" aria-hidden="true">
+            <div class="bd__head"><b>Three meals for the week, one pan</b><span>TikTok · 0:41</span><span class="bd__score">8.6 / 10</span></div>
+            <div class="bd__nav"><span>Overview</span><span>Hook</span><b>Script</b><span>Format and edit</span><span>Retention</span><span>Replicate</span></div>
+            <div class="bd__tl"><i style="flex:3"></i><i style="flex:5"></i><i style="flex:4"></i><i style="flex:9"></i><i style="flex:6"></i><i style="flex:8"></i><i style="flex:6"></i></div>
+            <ol class="bd__beats">
+              <li><time>0:00</time><em>Hook</em><span><q>This one pan is all three of my dinners this week.</q><small>States the promise before the first cut.</small></span></li>
+              <li><time>0:03</time><em>Setup</em><span><q>Twelve dollars of groceries, forty minutes, done.</q><small>Puts a price and a time on the promise.</small></span></li>
+              <li><time>0:08</time><em>Proof</em><span><q>Here is Monday, Wednesday and Friday, plated.</q><small>Shows the result early, so viewers stay for the how.</small></span></li>
+              <li><time>0:12</time><em>Value beat</em><span><q>Chicken thighs go in first, skin side down.</q><small>One step per shot, a cut every 2.4 s.</small></span></li>
+              <li><time>0:21</time><em>Rehook</em><span><q>The trick is what you do with the fat.</q><small>A new question at the halfway mark.</small></span></li>
+              <li><time>0:29</time><em>Payoff</em><span><q>That fat cooks the rice for Wednesday.</q><small>Answers the rehook with a visible result.</small></span></li>
+              <li><time>0:37</time><em>Loop</em><span><q>So one pan, three dinners.</q><small>The last line leads back into the first.</small></span></li>
+            </ol>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="outliers" data-moment="liquid-type" aria-labelledby="outliers-h">
+    <div class="wrap">
+      <h2 id="outliers-h" class="mo-lt__type">Outliers show what works</h2>
+      <p class="statement__body">A video at 38 times its creator’s median views did not get there on follower count. Its topic, hook and pacing did, and those you can reuse in your own niche.</p>
+      <dl class="statement__facts">
+        <div><dt>Outlier score</dt><dd>Views divided by the creator’s median views on recent posts.</dd></div>
+        <div><dt>Views per follower</dt><dd>1M views on a 10k account reads as 100×.</dd></div>
+        <div><dt>Engagement rate</dt><dd>Likes, comments, shares and saves divided by views.</dd></div>
+      </dl>
+    </div>
+  </section>
+
+  <section class="section" id="how" aria-labelledby="how-h">
+    <div class="wrap">
+      <div class="section-head">
+        <h2 id="how-h">Find outliers in 3 steps</h2>
+      </div>
+      <div class="grid">
+        <article class="card card--row card--open m-nolift">
+          <span class="step-num">1</span>
+          <h3>Add the creators</h3>
+          <p>Paste handles or profile links, many at once, each with a genre.</p>
+          <div class="panel" data-visual role="img" aria-label="Three creator handles pasted into the cooking genre">
+            <div class="stage"><div class="at-rise fit"><div class="ui d-card" aria-hidden="true">
+              <div class="d-card__row"><h5>Add creators</h5><span class="d-chip">Cooking</span></div>
+              <div class="d-handles">@onepandinners<br>@budgetbatchcook<br>@ricecookerlab</div>
+              <div class="d-note__line"><i>✓</i><span><b>3 creators</b> found, looking up posts</span></div>
+            </div></div></div>
+          </div>
+        </article>
+        <article class="card card--row card--open m-nolift">
+          <span class="step-num">2</span>
+          <h3>Scan the creator list</h3>
+          <p>Each creator’s new posts are scored against their own median views.</p>
+          <div class="panel" data-visual role="img" aria-label="A scan of 48 creators in progress, 214 posts checked, 81 cents spent">
+            <div class="stage"><div class="at-rise fit"><div class="ui d-card" aria-hidden="true">
+              <div class="d-card__row"><h5>Scan running</h5><span class="d-chip">TikTok, Reels</span></div>
+              <div class="d-prog"><i></i></div>
+              <div class="d-note__line"><i>✓</i><span><b>214 posts</b> from 48 creators</span></div>
+              <div class="d-note__line"><i>✓</i><span><b>$0.81</b> of a $2.00 scan cap</span></div>
+            </div></div></div>
+          </div>
+        </article>
+        <article class="card card--row card--open m-nolift">
+          <span class="step-num">3</span>
+          <h3>Analyze a video</h3>
+          <p>Claude reads the transcript, the cuts and eight frames, then writes the breakdown.</p>
+          <div class="panel" data-visual role="img" aria-label="An analysis in progress: video fetched, cuts measured, speech transcribed">
+            <div class="stage"><div class="at-rise fit"><div class="ui d-card" aria-hidden="true">
+              <div class="d-card__row"><h5>Analysis</h5><span class="d-chip">Step 4 of 5</span></div>
+              <div class="d-note__line"><i>✓</i><span>Got the video file</span></div>
+              <div class="d-note__line"><i>✓</i><span>Measured <b>23 cuts</b></span></div>
+              <div class="d-note__line"><i>✓</i><span>Transcribed <b>115 words</b></span></div>
+            </div></div></div>
+          </div>
+        </article>
+      </div>
+    </div>
+  </section>
+
+
+
+  <section class="section" id="questions" aria-labelledby="questions-h">
+    <div class="wrap">
+      <div class="grid">
+        <div class="span-5">
+          <h2 id="questions-h">Questions</h2>
+          <p class="muted">Setup, data and the limits of the numbers.</p>
+        </div>
+        <div class="faq span-6 start-7">
+          <div class="faq__item"><h3>Do I need API keys to try it?</h3><p>No. Without keys the app fills each platform with made-up videos, so you can click through every page first.</p></div>
+          <div class="faq__item"><h3>Is scraping TikTok and Instagram allowed?</h3><p>Not by their terms. It is common for personal research, but set Instagram to the official API and TikTok off to stay inside the rules.</p></div>
+          <div class="faq__item"><h3>Where do the video files go?</h3><p>They are deleted after the analysis. About 8 sampled frames stay on the video’s page.</p></div>
+          <div class="faq__item"><h3>Which Claude model writes the breakdown?</h3><p>Claude Opus 5.5, one call per video, with its answer checked against a fixed schema.</p></div>
+          <div class="faq__item"><h3>How does Outlier Finder estimate followers gained?</h3><p>It is an estimate. No platform shares it for other people’s videos, so the app compares daily follower snapshots around each post.</p></div>
+          <div class="faq__item"><h3>Can Outlier Finder run on a schedule?</h3><p>Yes. A daily refresh from cron adds new posts and the follower snapshots the estimates need.</p></div>
+        </div>
+      </div>
+    </div>
+  </section>
+  <section class="section" id="costs" aria-labelledby="costs-h">
+    <div class="wrap">
+      <div class="grid">
+        <div class="span-5">
+          <h2 id="costs-h">Prices per platform</h2>
+          <p>You bring your own keys and pay each service directly. Before every Apify run the app checks this month’s spend and stops at your budget. <a class="link" href="/scans">See your Apify budget</a></p>
+          <ul class="rows rows--cost">
+            <li><div><span class="rows__name">YouTube Shorts</span><img width="32" height="32" loading="lazy" src="assets/icons/youtube.svg" alt="YouTube"></div><span class="rows__value">Free to 10,000 units a day</span></li>
+            <li><div><span class="rows__name">TikTok</span><img width="32" height="32" loading="lazy" src="assets/icons/tiktok.svg" alt="TikTok"></div><span class="rows__value">≈ $0.0037 a post</span></li>
+            <li><div><span class="rows__name">Instagram Reels</span><img width="32" height="32" loading="lazy" src="assets/icons/instagram.svg" alt="Instagram"></div><span class="rows__value">≈ $0.0027 a post</span></li>
+            <li><div><span class="rows__name">One breakdown</span><img width="32" height="32" loading="lazy" src="assets/icons/claude.svg" alt="Claude"></div><span class="rows__value">One Claude call</span></li>
+          </ul>
+        </div>
+        <div class="costs__art span-6 start-7" data-visual role="img" aria-label="The Scans page: $3.12 of a $10.00 monthly Apify budget used, and three recent scans with their cost">
+          <div class="d-win scans" aria-hidden="true">
+            <div class="d-win__bar"><span class="d-win__dots"><i></i><i></i><i></i></span><span>Outlier Finder · Scans</span></div>
+            <div class="scans__body">
+              <div class="scans__budget">
+                <div class="d-card__row"><h5>Apify this month</h5><span class="d-score">$3.12 of $10.00</span></div>
+                <div class="d-prog"><i style="width:31%"></i></div>
+                <p>Each scan stops at $2.00. Cancelling aborts the Apify run.</p>
+              </div>
+              <ol class="scans__list">
+                <li><b>Cooking, all platforms</b><span>48 creators · 214 posts</span><em>$0.81</em></li>
+                <li><b>Fitness, TikTok</b><span>22 creators · 131 posts</span><em>$0.49</em></li>
+                <li><b>Finance, Shorts</b><span>17 creators · 3,900 units</span><em>$0.00</em></li>
+                <li><b>New creators, wide scan</b><span>12 keywords · 360 results</span><em>$1.33</em></li>
+              </ol>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer class="footer closing g2m" id="contact" aria-labelledby="close-h">
+  <div class="wrap">
+    <div class="closing__cta close--type">
+      <div class="section-head">
+        <h2 id="close-h">See this week’s outliers</h2>
+        <p>The dashboard opens on the videos furthest above their creator’s median.</p>
+      </div>
+      <a class="btn btn--primary btn--xl btn--wide" href="/">See the outliers<svg class="m-arrow" viewBox="0 0 12 12" aria-hidden="true"><path class="m-arrow__stem" d="M1 6h8"/><path class="m-arrow__head" d="M4.5 2.5 8 6l-3.5 3.5"/></svg></a>
+    </div>
+    <div class="closing__links">
+      <div class="grid">
+        <div class="span-2 stack-4">
+          <a class="nav__logo" href="#top"><span class="mark" data-mark="stack" aria-hidden="true"></span>Outlier Finder</a>
+          <p class="footer__lede">Outlier videos and why they worked.</p>
+        </div>
+        <div class="span-2 footer__col"><h3>App</h3><ul><li><a href="/">Outliers</a></li><li><a href="/opportunities">Opportunities</a></li><li><a href="/creators">Creators</a></li><li><a href="/scans">Scans</a></li></ul></div>
+        <div class="span-2 footer__col"><h3>Product</h3><ul><li><a href="#product">Breakdown</a></li><li><a href="#outliers">Outliers</a></li></ul></div>
+        <div class="span-2 footer__col"><h3>Steps</h3><ul><li><a href="#how">How it works</a></li></ul></div>
+        <div class="span-2 footer__col"><h3>Questions</h3><ul><li><a href="#questions">Setup and data</a></li></ul></div>
+        <div class="span-2 footer__col"><h3>Costs</h3><ul><li><a href="#costs">Per platform</a></li></ul></div>
+      </div>
+      <div class="footer__legal">
+        <span>&copy; 2026 Outlier Finder</span>
+        <div class="socials"></div>
+        <span class="t-small">Product names and logos are trademarks of their owners</span>
+      </div>
+    </div>
+  </div>
+</footer>
+<script type="module" src="assets/system.js"></script>
+<script type="module" src="assets/motion/motion.js"></script>
+<script type="module" src="assets/layout/layout.js"></script>
+</body>
+</html>

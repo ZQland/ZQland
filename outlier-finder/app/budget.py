@@ -34,7 +34,7 @@ def apify_month(token: str | None, fresh: bool = False, http: httpx.Client | Non
         if hit and not fresh and time.monotonic() - hit[0] < _MONTH_CACHE_SECONDS:
             return hit[1]
     try:
-        client = http or httpx.Client(timeout=20)
+        client = http or httpx.Client(timeout=8)
         r = client.get(f"{APIFY}/users/me/limits", headers={"Authorization": f"Bearer {token}"})
         r.raise_for_status()
         d = r.json()["data"]
@@ -46,6 +46,15 @@ def apify_month(token: str | None, fresh: bool = False, http: httpx.Client | Non
     with _month_lock:
         _month_cache[token] = (time.monotonic(), info)
     return info
+
+
+def apify_paused(cfg) -> str | None:
+    """Why Apify platforms can't run right now, or None. Cached, so cheap to call per page."""
+    m = month_summary(cfg) if cfg.apify_token else None
+    if not m or m["left"] > 0.01:
+        return None
+    return (f"Apify budget used up: ${m['used']:.2f} of ${m['cap']:.2f} this month, resets {m['resets']}. "
+            "Raise apify.monthly_budget_usd in niches.yaml (and the limit on Apify) to continue.")
 
 
 def month_summary(cfg) -> dict | None:

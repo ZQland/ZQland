@@ -37,7 +37,7 @@ def test_demo_analysis_end_to_end(scanned, monkeypatch):
     monkeypatch.setattr(main, "cfg", cfg)
     page = TestClient(main.app).get(f"/video/{vid}")
     assert page.status_code == 200
-    for text in ("Why it outperformed", "Retention techniques", "Replicate this format", "cuts / 10s"):
+    for text in ("Why it outperformed", "Retention techniques", "Replicate this format", "Cuts / 10s", "What works", "What doesn't", "beat-1"):
         assert text in page.text
     frame = TestClient(main.app).get(f"/frame/{a['frames'][0]}", params={"v": vid})
     assert frame.status_code == 200 and frame.headers["content-type"] == "image/jpeg"
@@ -156,3 +156,41 @@ def test_schema_stays_small():
         return n
     objects = json.dumps(SCHEMA).count('"type": "object"')
     assert objects <= 10 and count(SCHEMA) <= 60, (objects, count(SCHEMA))
+
+
+def test_connection_error_names_the_real_cause():
+    import anthropic
+    import httpx as hx
+    from app.analyzer import AnalysisError, ClaudeAnalyzer
+
+    an = ClaudeAnalyzer.__new__(ClaudeAnalyzer)
+    an.model, an.effort, an.anthropic = "claude-opus-5-5", "high", anthropic
+
+    class Msgs:
+        def create(self, **k):
+            try:
+                raise TypeError("process() takes no keyword arguments")
+            except TypeError as cause:
+                raise anthropic.APIConnectionError(request=hx.Request("POST", "https://api.anthropic.com")) from cause
+
+    an.client = type("C", (), {"beta": type("B", (), {"messages": Msgs()})()})()
+    with pytest.raises(AnalysisError, match=r"TypeError: process\(\) takes no keyword arguments"):
+        an.analyze({}, {"cuts": 0}, {}, "", [])
+
+
+def test_environment_check_flags_old_brotli_and_wrong_python(monkeypatch):
+    import sys
+    import types
+    from app import envcheck
+
+    class OldDecompressor:  # Brotli 1.0.x: process() takes no keyword arguments
+        def process(self, data):
+            return b""
+
+    monkeypatch.setitem(sys.modules, "brotli", types.SimpleNamespace(Decompressor=OldDecompressor))
+    monkeypatch.setattr(sys, "prefix", "/opt/miniconda3")
+    envcheck.environment_problems.cache_clear()
+    problems = envcheck.environment_problems()
+    envcheck.environment_problems.cache_clear()
+    assert any("not the project's .venv" in p for p in problems)
+    assert any("too old for the Anthropic SDK" in p for p in problems)

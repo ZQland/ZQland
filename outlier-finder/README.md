@@ -8,7 +8,7 @@ Find short-form videos on **YouTube Shorts, TikTok and Instagram Reels** that ma
 cd outlier-finder
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt          # also install ffmpeg: brew/apt/winget install ffmpeg
-uvicorn app.main:app --reload
+.venv/bin/uvicorn app.main:app --reload    # use the .venv's uvicorn, not a global/conda one
 # open http://localhost:8000 → Creators: add creators (or track the suggestions) → Scans → "Scan all"
 ```
 

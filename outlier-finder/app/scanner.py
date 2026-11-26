@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 
 from . import scoring
@@ -530,6 +531,40 @@ def platform_of(text: str, default: str) -> str:
     return default
 
 
+_SEPARATORS = re.compile(r"[\s,;|]+")
+
+
+def split_handles(text: str) -> list[str]:
+    """Pasted handles/URLs -> a de-duplicated list. Splits on new lines, spaces, tabs, commas,
+    semicolons and pipes, and on run-together handles ("@a@b"). Order is kept."""
+    out, seen = [], set()
+    for chunk in _SEPARATORS.split(text or ""):
+        for part in re.split(r"(?<=[\w.])(?=@)", chunk):
+            part = part.strip().rstrip(".").strip("\"'()[]<>").rstrip(".")
+            if not part or part == "@":
+                continue
+            key = part.lower().rstrip("/")
+            if key not in seen:
+                seen.add(key)
+                out.append(part)
+    return out
+
+
+def _tracked_ids(cfg: Config) -> set[str]:
+    with connect(cfg.db_path) as conn:
+        return {r["id"] for r in conn.execute("SELECT id FROM channels WHERE tracked = 1")}
+
+
+def _guess_id(platform: str, entry: str) -> str | None:
+    """The channel id an entry will get, where it can be known without a lookup (TikTok, Instagram)."""
+    from .providers.apify import _ig_username, _tiktok_username
+    if platform == "tiktok":
+        return f"tiktok:{_tiktok_username(entry)}"
+    if platform == "instagram":
+        return f"instagram:{_ig_username(entry)}"
+    return None
+
+
 def add_creator(cfg: Config, platform: str, handle_or_url: str, provider=None, genre: str | None = None) -> str:
     prov = provider or source_for(cfg, platform).provider
     if prov is None:
@@ -549,17 +584,24 @@ def add_creators(cfg: Config, scan_id: int, entries: list[str], default_platform
     from .budget import ApifyBudget
 
     by_platform: dict[str, list[str]] = {}
+    tracked, skipped = _tracked_ids(cfg), 0
     for e in entries:
         if e.strip():
-            by_platform.setdefault(platform_of(e, default_platform), []).append(e.strip())
+            platform = platform_of(e, default_platform)
+            if _guess_id(platform, e.strip()) in tracked:
+                skipped += 1  # already tracked: don't pay to look it up again
+                continue
+            by_platform.setdefault(platform, []).append(e.strip())
     added, notes, cost, usage = [], [], 0.0, 0
+    if skipped:
+        notes.append(f"{skipped} already tracked, skipped")
     for platform, handles in by_platform.items():
         prov = (providers or {}).get(platform) or source_for(cfg, platform).provider
         if prov is None:
             notes.append(f"{platform}: no data source")
             continue
         client, u0 = _apify_client(prov), prov.usage
-        budget = ApifyBudget(cfg, cfg.apify.max_usd_per_scan) if client else None
+        budget = ApifyBudget(cfg, cfg.apify.max_usd_per_import) if client else None
         old = client.budget if client else None
         if client:
             client.budget = budget
@@ -583,12 +625,16 @@ def add_creators(cfg: Config, scan_id: int, entries: list[str], default_platform
             if len(profiles) < len(handles):
                 notes.append(f"{platform}: {len(handles) - len(profiles)} of {len(handles)} not found")
         except Exception as e:  # noqa: BLE001
-            notes.append(f"{platform}: {type(e).__name__}: {e}")
+            from .budget import BudgetExceeded
+            plain = isinstance(e, (BudgetExceeded, ProviderUnavailable, QuotaExceeded))
+            notes.append(f"{platform}: {e}" if plain else f"{platform}: {type(e).__name__}: {e}")
         finally:
             if client:
                 client.budget = old
             cost += budget.spent if budget else 0.0
             usage += prov.usage - u0
-    status = "finished" if added and not notes else ("partial" if added else "failed")
+    real_notes = [n for n in notes if not n.endswith("already tracked, skipped")]
+    status = ("finished" if added and not real_notes else "partial" if added
+              else "finished" if skipped and not real_notes else "failed")
     _finish(cfg, scan_id, status, usage,
             f"Tracked {len(added)} creators{' (' + genre + ')' if genre else ''}. " + " · ".join(notes), cost)

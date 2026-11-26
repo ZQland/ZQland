@@ -1,83 +1,97 @@
 {% extends "base.html" %}
-{% block head %}{% if running %}<meta http-equiv="refresh" content="3">{% endif %}{% endblock %}
+{% from "_icons.html" import icon %}
+{% block title %}Scans · Outlier Finder{% endblock %}
+{% block head %}{% if running %}<noscript><meta http-equiv="refresh" content="4"></noscript>{% endif %}{% endblock %}
 {% block content %}
-<h1>Scans</h1>
-<p class="lead">A scan checks your <a href="/creators">creator list</a> for new posts and scores each one against the
-  creator's own median. Each platform is one batched lookup, and platforms run side by side. Creators checked in the last
-  {{ cfg.apify.refresh_hours }} hours are skipped, and later checks fetch only each creator's {{ cfg.apify.refresh_posts }}
-  newest posts on TikTok and Instagram.</p>
+<div class="phead">
+  <div>
+    <h1>Scans</h1>
+    <p class="sub">A scan checks your <a href="/creators" style="color:var(--accent)">creator list</a> for new posts and scores each one
+      against the creator's own median. Platforms run side by side, one batched lookup each. Creators checked in the last
+      {{ cfg.apify.refresh_hours }} hours are skipped; later checks fetch only the {{ cfg.apify.refresh_posts }} newest posts on TikTok and Instagram.</p>
+  </div>
+</div>
 
 {% if apify %}
-<div class="budget {{ 'over' if apify.left <= 0.01 else ('low' if apify.pct >= 80 else '') }}">
-  <div class="budget-head">
-    <strong>Apify this month: ${{ '%.2f'|format(apify.used) }} of ${{ '%.2f'|format(apify.cap) }}</strong>
-    <span class="muted">resets {{ apify.resets }}</span>
+<section class="panel budget {{ 'over' if apify.left <= 0.01 else ('low' if apify.pct >= 80 else '') }}">
+  <div class="budget-top">
+    <div><b>${{ '%.2f'|format(apify.left if apify.left > 0 else 0) }}</b> <span>left of ${{ '%.2f'|format(apify.cap) }} Apify this month</span></div>
+    <span class="mono">${{ '%.2f'|format(apify.used) }} used · resets {{ apify.resets }}</span>
   </div>
-  <div class="meter" role="meter" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ apify.pct }}"><span style="width: {{ apify.pct }}%"></span></div>
+  <div class="meter" role="meter" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ apify.pct }}"><span style="width: {{ [apify.pct, 100]|min }}%"></span></div>
   <p class="note">
-    {% if apify.left <= 0.01 %}<strong>TikTok and Instagram are paused</strong> until the cycle resets or you raise the limit.
-      YouTube still works.{% else %}${{ '%.2f'|format(apify.left) }} left.{% endif %}
+    {% if apify.left <= 0.01 %}<strong style="color:var(--bad)">TikTok and Instagram are paused</strong> until the cycle resets or you raise the limit.
+      YouTube still works. {% endif %}
     Cap: your budget of ${{ '%.2f'|format(apify.budget) }} (<code>apify.monthly_budget_usd</code>){% if apify.account_limit < apify.budget %},
     lowered to the account's ${{ '%.2f'|format(apify.account_limit) }} limit on Apify{% endif %}.
     Each scan spends at most ${{ '%.2f'|format(cfg.apify.max_usd_per_scan) }} (<code>apify.max_usd_per_scan</code>), enforced by Apify itself.
   </p>
-</div>
+</section>
 {% endif %}
 
-<form method="post" action="/settings/wide-scan" class="switch-row">
-  <input type="hidden" name="on" value="{{ '0' if wide else '1' }}">
-  <button type="submit" class="switch {{ 'on' if wide else '' }}" role="switch" aria-checked="{{ 'true' if wide else 'false' }}"
-          {% if running %}disabled{% endif %}><span class="knob"></span></button>
-  <div>
-    <strong>Wide scan {{ 'on' if wide else 'off' }}</strong>
-    <p class="note">{% if wide %}Scans also search every keyword of the genre (YouTube and TikTok, one batched search per platform)
-      and look up at most {{ cfg.apify.new_creators_per_scan }} promising new creators per platform. Uses far more Apify credits.
-      {% else %}Off: scans check your creator list only. Turn on to also discover new creators by keyword search
-      (YouTube and TikTok; Instagram is creator list only).{% endif %}</p>
-  </div>
-</form>
+<div class="scan-grid">
+  <form method="post" action="/scans" class="panel scan-card">
+    <h3>Run a scan</h3>
+    <fieldset class="platform-checks">
+      <legend class="sr-only">Platforms</legend>
+      {% for s in sources %}
+        <label class="{{ '' if s.provider else 'disabled' }}">
+          <input type="checkbox" name="platforms" value="{{ s.platform }}" {% if s.provider %}checked{% else %}disabled{% endif %}>
+          {{ PLATFORM_LABELS[s.platform] }}
+          <small>{% if not s.provider %}off{% elif s.demo %}demo data{% else %}{{ counts.platform.get(s.platform, 0) }} creators{% endif %}</small>
+        </label>
+      {% endfor %}
+    </fieldset>
+    {% if not counts.total and not wide %}
+      <p class="inline-banner">Your creator list is empty, so a scan has nothing to check.
+        <a href="/creators">Add creators</a>, or track the suggested ones there (free: they're from earlier scans).</p>
+    {% endif %}
+    <div class="scan-buttons">
+      {% for g in genres %}
+      <button type="submit" name="target" value="{{ g }}" {% if running %}disabled{% endif %}>Scan {{ g|replace('_',' ') }}
+        <small>{{ counts.genre.get(g, 0) }} creators{% if wide %} + {{ cfg.genres[g]|length }} keywords{% endif %}</small></button>
+      {% endfor %}
+      <button class="primary" type="submit" name="target" value="all" {% if running %}disabled{% endif %}>Scan all
+        <small>{{ counts.total }} creators{% if wide %} + {{ cfg.genres.values()|map('length')|sum }} keywords{% endif %}</small></button>
+    </div>
+    <p class="note">YouTube: 10,000 free units a day; checking a creator costs about 3, a keyword search about 100.
+      TikTok and Instagram: Apify bills per post fetched.</p>
+  </form>
 
-<form method="post" action="/scans" class="scan-form">
-  <fieldset>
-    <legend>Platforms</legend>
-    {% for s in sources %}
-      <label class="check {{ '' if s.provider else 'disabled' }}">
-        <input type="checkbox" name="platforms" value="{{ s.platform }}" {% if s.provider %}checked{% else %}disabled{% endif %}>
-        {{ PLATFORM_LABELS[s.platform] }}
-        <small>{% if not s.provider %}off{% elif s.demo %}demo data{% else %}{{ counts.platform.get(s.platform, 0) }} creators{% endif %}</small>
-      </label>
-    {% endfor %}
-  </fieldset>
-  {% if not counts.total and not wide %}
-    <p class="banner-inline">Your creator list is empty, so a scan has nothing to check.
-      <a href="/creators">Add creators</a>, or track the suggested ones there (free: they're from earlier scans).</p>
-  {% endif %}
-  <div class="scan-buttons">
-    {% for g in genres %}
-    <button type="submit" name="target" value="{{ g }}" {% if running %}disabled{% endif %}>Scan {{ g|replace('_',' ') }}
-      <small>{{ counts.genre.get(g, 0) }} creators{% if wide %} + {{ cfg.genres[g]|length }} keywords{% endif %}</small></button>
-    {% endfor %}
-    <button class="primary" type="submit" name="target" value="all" {% if running %}disabled{% endif %}>Scan all
-      <small>{{ counts.total }} creators{% if wide %} + {{ cfg.genres.values()|map('length')|sum }} keywords{% endif %}</small></button>
+  <div class="panel scan-card">
+    <h3>Discovery</h3>
+    <form method="post" action="/settings/wide-scan" class="switch-row">
+      <input type="hidden" name="on" value="{{ '0' if wide else '1' }}">
+      <button type="submit" class="switch {{ 'on' if wide else '' }}" role="switch" aria-checked="{{ 'true' if wide else 'false' }}" aria-label="Wide scan"
+              {% if running %}disabled{% endif %}><span class="knob"></span></button>
+      <div>
+        <strong>Wide scan {{ 'on' if wide else 'off' }}</strong>
+        <p class="note">{% if wide %}Scans also search every keyword of the genre (YouTube and TikTok, one batched search per platform)
+          and look up at most {{ cfg.apify.new_creators_per_scan }} promising new creators per platform. Uses far more Apify credits.
+          {% else %}Off: scans check your creator list only. Turn on to also discover new creators by keyword search
+          (YouTube and TikTok; Instagram is creator list only).{% endif %}</p>
+      </div>
+    </form>
   </div>
-</form>
-<p class="note">YouTube: 10,000 free units a day; checking a creator costs about 3, a keyword search about 100.
-  TikTok and Instagram: Apify bills per post fetched.</p>
+</div>
 
 {% if scans %}
+<h2 class="sec">History <small>{{ scans|length }}</small></h2>
 <div class="table-wrap">
 <table>
   <thead><tr><th>#</th><th>Job</th><th>Started</th><th>Status</th><th class="r">Apify $</th><th class="r">Units / results</th><th>Progress</th></tr></thead>
   <tbody>
   {% for s in scans %}
-    <tr>
-      <td>{{ s.id }}</td><td>{{ s.target|replace('_',' ') }}</td><td>{{ s.started_at|replace('T',' ')|replace('Z',' UTC') }}</td>
-      <td><span class="status {{ s.status }}">{{ s.status|replace('_',' ') }}</span>
+    <tr {% if s.status == 'running' %}class="row-running" data-scan-job="{{ s.id }}"{% endif %}>
+      <td class="mono">{{ s.id }}</td><td>{{ s.target|replace('_',' ') }}</td>
+      <td class="mono" style="font-size:12.5px;color:var(--muted)">{{ s.started_at|replace('T',' ')|replace('Z',' UTC') }}</td>
+      <td><span class="st {{ s.status }}">{% if s.status == 'running' %}<span class="spinner" aria-hidden="true"></span>{% endif %}{{ s.status|replace('_',' ') }}</span>
         {% if s.status == 'running' %}<form method="post" action="/scans/{{ s.id }}/cancel" class="inline-cancel"
           onsubmit="return confirm('Cancel this scan? Apify runs in progress are aborted; results so far are kept.')">
           <button type="submit" class="link-button">Cancel</button></form>{% endif %}</td>
-      <td class="r">{{ '%.2f'|format(s.cost_usd) if s.cost_usd else '–' }}</td>
-      <td class="r">{{ s.quota_used }}</td><td class="wrap-cell">{{ s.message or '' }}</td>
+      <td class="r" data-scan-field="cost_usd">{{ '%.2f'|format(s.cost_usd) if s.cost_usd else '–' }}</td>
+      <td class="r" data-scan-field="quota_used">{{ s.quota_used }}</td>
+      <td class="wrap-cell">{% if s.status == 'running' %}<div class="row-bar" aria-hidden="true"></div>{% endif %}<span data-scan-field="message">{{ s.message or '' }}</span></td>
     </tr>
   {% endfor %}
   </tbody>

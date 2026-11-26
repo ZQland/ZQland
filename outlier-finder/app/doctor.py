@@ -120,10 +120,20 @@ def _tool_checks(out: list[str], cfg) -> None:
         out.append(f"  {BAD} faster-whisper not installed: pip install -r requirements.txt")
 
 
+def _python_checks(out: list[str]) -> None:
+    import sys
+    from .envcheck import environment_problems
+    out.append("\nPython")
+    out.append(f"  {OK} {sys.executable} (Python {sys.version.split()[0]})")
+    for p in environment_problems():
+        out.append(f"  {BAD} {p}")
+
+
 def run() -> str:
     shell_before = {k: os.environ[k] for k in KEYS if k in os.environ}
     cfg = load_config()  # loads .env into the environment
     out = ["Outlier Finder doctor"]
+    _python_checks(out)
     _env_file_checks(out)
     _key_checks(out, shell_before)
     out.append("\nData sources")
