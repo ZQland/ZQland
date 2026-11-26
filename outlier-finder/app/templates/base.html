@@ -1,0 +1,112 @@
+{% from "_icons.html" import icon %}<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#07080a">
+  <title>{% block title %}Outlier Finder{% endblock %}</title>
+  <link rel="icon" href="/welcome/favicon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css?v={{ asset_v() }}">
+  {% block head %}{% endblock %}
+</head>
+<body>
+  <div class="loadbar" id="loadbar" aria-hidden="true"><span></span></div>
+
+  <header class="topbar">
+    <div class="wrap topbar-in">
+      <a class="logo" href="/"><span class="logo-mark" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M22 7 13.5 15.5 8.5 10.5 2 17"/><path d="M16 7h6v6"/></svg></span>Outlier<span>Finder</span></a>
+      <nav class="tabs" aria-label="Main">
+        {% set here = request.url.path %}
+        {% for href, label, ic in [('/', 'Discover', 'compass'), ('/breakdowns', 'Breakdowns', 'listcheck'), ('/opportunities', 'Opportunities', 'bulb'), ('/creators', 'Creators', 'users'), ('/scans', 'Scans', 'radar')] %}
+        <a href="{{ href }}" {% if here == href or (href != '/' and here.startswith(href)) or (href == '/' and here.startswith('/video')) %}aria-current="page"{% endif %}>{{ icon(ic) }}{{ label }}</a>
+        {% endfor %}
+      </nav>
+      <div class="top-right">
+        {% if job %}
+        <a class="job-pill" href="/scans" data-scan-job="{{ job.id }}" data-status="running" title="{{ job.target }}">
+          <span class="spinner" aria-hidden="true"></span>
+          <span><strong>Running</strong> <span class="job-msg" data-scan-field="message">{{ job.message or 'starting…' }}</span></span>
+        </a>
+        {% endif %}
+        {% if budget %}
+        <a class="chip-link budget-chip {{ 'over' if budget.left <= 0 else ('low' if budget.pct >= 80 else '') }}" href="/scans"
+           title="Apify: ${{ '%.2f'|format(budget.used) }} of ${{ '%.2f'|format(budget.cap) }} used, resets {{ budget.resets }}">
+          <b>${{ '%.2f'|format(budget.left if budget.left > 0 else 0) }}</b> left
+          <span class="mini" aria-hidden="true"><i style="width: {{ [budget.pct, 100]|min }}%"></i></span>
+        </a>
+        {% endif %}
+        <details class="status">
+          {% set live = sources|selectattr('provider')|rejectattr('demo')|list|length + (1 if cfg.anthropic_ready else 0) %}
+          <summary aria-label="Data sources">{% for s in sources %}{% set paused = apify_paused and s.mode == 'scraper' and s.provider and not s.demo %}<span class="dot {{ 'paused' if paused else ('demo' if s.demo else ('off' if not s.provider else 'live')) }}"></span>{% endfor %}<span class="dot {{ 'live' if cfg.anthropic_ready else 'demo' }}"></span></summary>
+          <div class="status-pop">
+            <span class="head">Data sources</span>
+            {% for s in sources %}
+              {% set paused = apify_paused and s.mode == 'scraper' and s.provider and not s.demo %}
+              {% set st = 'paused' if paused else ('demo' if s.demo else ('off' if not s.provider else 'live')) %}
+              <span class="src-row {{ st }}" title="{{ apify_paused if paused else s.note }}"><span class="dot {{ st }}"></span>{{ PLATFORM_LABELS[s.platform] }}
+                <b>{% if not s.provider %}off{% elif s.demo %}demo data{% elif paused %}paused{% else %}{{ s.mode }}{% endif %}</b></span>
+            {% endfor %}
+            <span class="src-row"><span class="dot {{ 'live' if cfg.anthropic_ready else 'demo' }}"></span>Claude
+              <b>{{ cfg.analysis.model if cfg.anthropic_ready else 'demo analyses' }}</b></span>
+            <a href="/welcome/">What is Outlier Finder? →</a>
+          </div>
+        </details>
+      </div>
+    </div>
+  </header>
+
+  {% set demo = sources|selectattr('demo')|list or not cfg.anthropic_ready %}
+  {% if demo or env_problems or problems %}
+  <div class="wrap notices">
+    {% if demo %}
+    <div class="notice warn">{{ icon('info') }}<p>Some sources use <strong>demo data</strong> because their key is missing.
+      Keys are read from <code>{{ env_path }}</code> ({{ 'found' if env_exists else 'not found' }}) when the server starts.
+      After editing it, restart the server. To see what's wrong, run <code>python -m app.cli doctor</code>.</p></div>
+    {% endif %}
+    {% if env_problems %}
+    <div class="notice err" role="alert">{{ icon('alert') }}<div><strong>Server setup problem</strong>
+      <ul>{% for p in env_problems %}<li>{{ p }}</li>{% endfor %}</ul></div></div>
+    {% endif %}
+    {% if problems %}
+    <div class="problems" role="alert">
+      <div class="problems-top">
+        <p>{{ icon('alert') }} <strong>{{ problems|length }} recent problem{{ '' if problems|length == 1 else 's' }}</strong></p>
+        <form method="post" action="/alerts/dismiss"><input type="hidden" name="back" value="{{ return_to }}">
+          <button type="submit" class="small ghost">Dismiss</button></form>
+      </div>
+      <ul>{% for p in problems[:2] %}<li><a href="{{ p.link }}">{{ p.title }}</a>{% if p.message %}<span>{{ p.message }}</span>{% endif %}</li>{% endfor %}</ul>
+      {% if problems|length > 2 %}
+      <details><summary>Show {{ problems|length - 2 }} more</summary>
+        <ul>{% for p in problems[2:] %}<li><a href="{{ p.link }}">{{ p.title }}</a>{% if p.message %}<span>{{ p.message }}</span>{% endif %}</li>{% endfor %}</ul>
+      </details>
+      {% endif %}
+    </div>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  <main class="wrap">{% block content %}{% endblock %}</main>
+
+  <footer class="foot">
+    <div class="wrap">
+      <span class="mono">{{ summary.videos|num }} videos · {{ summary.channels|num }} creators · {{ summary.tracked }} tracked</span>
+      <a href="/welcome/">What is Outlier Finder?</a>
+    </div>
+  </footer>
+
+  {# Toasts: server messages after an action, plus job results and connection problems from app.js #}
+  <div class="toasts" id="toasts" aria-live="polite">
+    {% if flash %}
+    <div class="toast {{ flash.kind }}" role="{{ 'alert' if flash.kind == 'error' else 'status' }}" data-server-toast>
+      {{ icon('alert' if flash.kind == 'error' else ('info' if flash.kind == 'info' else 'check')) }}
+      <p>{{ flash.msg }}</p>
+      <button type="button" class="toast-close" aria-label="Dismiss">{{ icon('x') }}</button>
+    </div>
+    {% endif %}
+  </div>
+  <script src="/static/filters.js?v={{ asset_v() }}" defer></script>
+  <script src="/static/app.js?v={{ asset_v() }}" defer></script>
+</body>
+</html>

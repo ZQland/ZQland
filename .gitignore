@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+outlier-finder/data/
+outlier-finder/.env
+outlier-finder/.taste-skill/

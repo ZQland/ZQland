@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% from "_multiselect.html" import multiselect %}
+{% from "_icons.html" import icon %}
+{% block title %}Discover · Outlier Finder{% endblock %}
+{% block content %}
+<div class="phead">
+  <div>
+    <h1>Viral outliers</h1>
+    <p class="sub">Short-form videos that got at least <strong>{{ cfg.settings.min_outlier_score }}×</strong> their creator's median views,
+      from creators with {{ cfg.settings.min_followers|num }}–{{ cfg.settings.max_followers|num }} followers. Open one to see what works and what doesn't.</p>
+  </div>
+  {% if videos %}
+  {% set analyzed = videos|selectattr('analysis_status', 'equalto', 'done')|list|length %}
+  <div class="kpis">
+    <div class="kpi"><b>{{ videos|length }}</b><span>outliers</span></div>
+    <div class="kpi accent"><b>{{ (videos|map(attribute='outlier_score')|select|max) ~ '×' }}</b><span>top multiplier</span></div>
+    {% if analyzed %}<div class="kpi good"><b>{{ analyzed }}</b><span>broken down</span></div>{% endif %}
+  </div>
+  {% endif %}
+</div>
+
+<form class="panel toolbar filters" method="get">
+  {{ multiselect('Platform', 'platform', PLATFORMS|map('pair', PLATFORM_LABELS)|list, platform, 'All platforms') }}
+  {{ multiselect('Genre', 'genre', genres|map('pair')|list, genre, 'All genres') }}
+  <div data-keyword-filter>
+  {{ multiselect('Keyword', 'keyword', keyword_options, keyword, 'All keywords') }}
+  </div>
+  <label class="field">Sort
+    <select name="sort">
+      {% for key, label in [('outlier','Outlier score'),('reach','Views ÷ followers'),('engagement','Engagement rate'),('velocity','Views per day'),('views','Total views'),('newest','Newest')] %}
+      <option value="{{ key }}" {% if key == sort %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label class="field">Min outlier
+    <input type="number" name="min_outlier" step="0.5" min="0" value="{{ min_outlier or '' }}" placeholder="{{ cfg.settings.min_outlier_score }}">
+  </label>
+  <label class="field">Max followers
+    <input type="number" name="max_subs" step="1000" min="0" value="{{ max_subs or '' }}" placeholder="{{ cfg.settings.max_followers }}">
+  </label>
+  <button type="submit" class="primary">Apply</button>
+</form>
+
+{% if running %}<p class="note" style="margin-bottom:12px">A scan is running. New outliers appear here when it finishes.</p>{% endif %}
+
+{% if not videos %}
+  <div class="empty">
+    {{ icon('compass') }}
+    {% if not summary.tracked %}
+    <p>No outliers yet. Add the creators you want to watch, then scan them.</p>
+    <a class="button primary" href="/creators">Add creators</a>
+    {% else %}
+    <p>No outliers match. Run a scan or loosen the filters.</p>
+    <a class="button primary" href="/scans">Run a scan</a>
+    {% endif %}
+  </div>
+{% else %}
+<p class="count">{% if videos|length >= 200 %}Top 200 shown. Narrow by platform, genre or keyword to see more.{% else %}{{ videos|length }} results{% endif %}</p>
+<div class="vgrid">
+  {% for v in videos %}{% include "_card.html" %}{% endfor %}
+</div>
+{% endif %}
+{% endblock %}

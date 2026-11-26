@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% from "_icons.html" import icon %}
+{% block title %}Breakdowns · Outlier Finder{% endblock %}
+{% block content %}
+<div class="phead">
+  <div>
+    <h1>Breakdowns</h1>
+    <p class="sub">Every video Claude has broken down, with what carried it and what held it back. Scores are 1–10 per criterion:
+      <span style="color:var(--good)">7+ works</span>, <span style="color:var(--mid)">6 is average</span>,
+      <span style="color:var(--bad)">5 or less doesn't</span>.</p>
+  </div>
+  {% if rows %}
+  <form method="get" class="toolbar" style="padding:0;margin:0">
+    <label class="field">Sort
+      <select name="sort" onchange="this.form.requestSubmit()">
+        {% for key, label in [('newest','Newest'),('score','Breakdown score'),('outlier','Outlier score')] %}
+        <option value="{{ key }}" {% if key == sort %}selected{% endif %}>{{ label }}</option>{% endfor %}
+      </select>
+    </label>
+    <noscript><button type="submit">Sort</button></noscript>
+  </form>
+  {% endif %}
+</div>
+
+{% if not rows %}
+  <div class="empty">
+    {{ icon('listcheck') }}
+    <p>No breakdowns yet. Open any outlier and press <strong>Analyze this video</strong>: Claude reads the transcript, frames and
+      cut data, then scores what works and what doesn't.</p>
+    <a class="button primary" href="/">Find an outlier</a>
+  </div>
+{% else %}
+<div class="blist">
+  {% for r in rows %}{% set vd = r.verdict %}
+  <a class="brow" href="/video/{{ r.id }}">
+    <div class="vthumb">
+      <div class="ph">{{ icon('play') }}</div>
+      {% if r.thumbnail %}<img src="/thumb/{{ r.id }}" alt="" loading="lazy" onload="this.classList.add('ok')" onerror="this.remove()">{% endif %}
+    </div>
+    <div class="brow-main">
+      <div class="vtitle">{{ r.b.topic or r.title or '(no caption)' }}</div>
+      <div class="vby">{{ r.channel_title or r.channel_handle }} · {{ PLATFORM_LABELS[r.platform] }}</div>
+      <div class="tags">
+        {% if r.outlier_score %}<span class="tag accent mono">{{ r.outlier_score }}× median</span>{% endif %}
+        {% if r.b.format_name %}<span class="tag" title="Format">{{ r.b.format_name }}</span>{% endif %}
+        {% if r.b.hook %}<span class="tag" title="Hook type">{{ r.b.hook.hook_type|replace('_',' ') }} hook</span>{% endif %}
+        {% if r.analysis_demo %}<span class="tag mid">demo</span>{% endif %}
+      </div>
+    </div>
+    <div class="ring {{ tone(r.overall) }}" style="--p: {{ ((r.overall or 0) * 10)|round }}" title="Breakdown score"><b>{{ r.overall or '–' }}</b></div>
+    <div class="bcol">
+      <p class="col-head">Works</p>
+      <ul class="minilist">
+        {% for i in vd.works[:3] %}<li class="good">{{ icon('check') }}<span>{{ i.label }}</span><b>{{ i.score }}</b></li>
+        {% else %}<li class="none">Nothing above average</li>{% endfor %}
+      </ul>
+    </div>
+    <div class="bcol">
+      <p class="col-head">Doesn't</p>
+      <ul class="minilist">
+        {% for i in vd.fails[:3] %}<li class="bad">{{ icon('x') }}<span>{{ i.label }}</span><b>{{ i.score }}</b></li>
+        {% else %}<li class="none">No weak spots</li>{% endfor %}
+      </ul>
+    </div>
+  </a>
+  {% endfor %}
+</div>
+{% endif %}
+{% endblock %}

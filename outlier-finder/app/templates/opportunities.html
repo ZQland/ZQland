@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% from "_multiselect.html" import multiselect %}
+{% from "_icons.html" import icon %}
+{% block title %}Opportunities · Outlier Finder{% endblock %}
+{% block content %}
+<div class="phead">
+  <div>
+    <h1>Keyword opportunities</h1>
+    <p class="sub">Where demand is high and supply is low. <strong>Demand</strong> = outliers found × their median outlier score.
+      <strong>Supply</strong> = YouTube's rough count of matching Shorts from the last {{ cfg.settings.lookback_days }} days.
+      <strong>Opportunity</strong> = demand ÷ log₁₀(supply). TikTok and Instagram don't publish supply, so compare those within one platform.</p>
+  </div>
+</div>
+
+<form class="panel toolbar filters" method="get" data-autosubmit>
+  {{ multiselect('Platform', 'platform', PLATFORMS|map('pair', PLATFORM_LABELS)|list, platform, 'All platforms') }}
+  {{ multiselect('Genre', 'genre', genres|map('pair')|list, genre, 'All genres') }}
+  <noscript><button type="submit">Apply</button></noscript>
+</form>
+
+{% if not rows %}
+  <div class="empty">{{ icon('bulb') }}
+    <p>No keyword data yet. Keywords are measured only by <strong>wide scan</strong> (keyword search), which is off,
+      so normal scans check your creator list and leave this page empty.</p>
+    <a class="button" href="/scans">Wide scan settings</a></div>
+{% else %}
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Keyword</th><th>Platform</th><th>Genre</th><th class="r">Opportunity</th><th class="r">Outliers</th>
+    <th class="r">Median outlier</th><th class="r">Supply</th><th class="r">Candidates</th><th></th></tr></thead>
+  <tbody>
+  {% set top = rows[0].opportunity or 1 %}
+  {% for r in rows %}
+    <tr>
+      <td><strong>{{ r.keyword }}</strong></td>
+      <td>{{ PLATFORM_LABELS[r.platform] }}</td>
+      <td>{{ r.genre|replace('_',' ') }}</td>
+      <td class="r"><span class="cell-bar">{{ r.opportunity }}<i style="--w: {{ ((r.opportunity or 0) / top * 100)|round }}%"></i></span></td>
+      <td class="r">{{ r.outliers }}</td>
+      <td class="r">{{ r.median_outlier ~ '×' if r.median_outlier else '–' }}</td>
+      <td class="r">{{ r.supply|num }}</td>
+      <td class="r">{{ r.candidates }}</td>
+      <td><a class="go" href="/?platform={{ r.platform }}&genre={{ r.genre }}&keyword={{ r.keyword|urlencode }}">View outliers →</a></td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endif %}
+{% endblock %}

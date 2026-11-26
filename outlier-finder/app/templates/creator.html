@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% from "_icons.html" import icon %}
+{% block title %}{{ c.title or c.handle }} · Outlier Finder{% endblock %}
+{% block head %}{% if running %}<noscript><meta http-equiv="refresh" content="5"></noscript>{% endif %}{% endblock %}
+{% block content %}
+<a class="back" href="/creators">{{ icon('back') }} Creators</a>
+<header class="c-head">
+  <div class="vby-row"><span class="plat-badge"><img src="/static/icons/{{ c.platform }}.svg" alt="">{{ PLATFORM_LABELS[c.platform] }}</span>
+    {% if c.tracked %}<span class="tag good">tracked</span>{% endif %}{% if c.genre %}<span class="tag">{{ c.genre|replace('_',' ') }}</span>{% endif %}</div>
+  <div class="phead" style="margin:0">
+    <div>
+      <h1>{{ c.title or c.handle }}</h1>
+      <p class="c-meta">{% if c.handle %}<span>{{ c.handle }}</span>{% endif %}
+        {% if c.url %}<a href="{{ c.url }}" target="_blank" rel="noopener">profile {{ icon('external') }}</a>{% endif %}</p>
+    </div>
+    <div class="kpis">
+      <div class="kpi"><b>{{ c.followers|num }}</b><span>followers</span></div>
+      <div class="kpi"><b>{{ c.median_views_short|num }}</b><span>median views{% if c.median_views_long %} (Shorts){% endif %}</span></div>
+      {% if c.median_views_long %}<div class="kpi"><b>{{ c.median_views_long|num }}</b><span>median long-form</span></div>{% endif %}
+      <div class="kpi accent"><b>{{ snapshots }}</b><span>snapshots</span></div>
+    </div>
+  </div>
+  <div class="actions">
+    <form method="post" action="/track/{{ c.id }}"><input type="hidden" name="tracked" value="{{ 0 if c.tracked else 1 }}">
+      <button type="submit" class="{{ '' if c.tracked else 'primary' }}">{{ 'Stop tracking' if c.tracked else '+ Track creator' }}</button></form>
+    <form method="post" action="/creator/{{ c.id }}/genre">
+      <select name="genre" onchange="this.form.requestSubmit()" aria-label="Genre">
+        <option value="">No genre</option>
+        {% for g in genres %}<option value="{{ g }}" {% if g == c.genre %}selected{% endif %}>{{ g|replace('_',' ') }}</option>{% endfor %}
+      </select><noscript><button type="submit">Set genre</button></noscript></form>
+    <form method="post" action="/creators/refresh"><input type="hidden" name="channel_id" value="{{ c.id }}">
+      <button type="submit" {% if running %}disabled{% endif %}>{{ icon('refresh') }}Refresh now</button></form>
+  </div>
+</header>
+
+<h2 class="sec">Followers over time</h2>
+{% if spark %}
+<figure class="spark">
+  <svg viewBox="0 0 {{ spark.w }} {{ spark.h }}" preserveAspectRatio="none" role="img" aria-label="Follower count over time">
+    <polyline points="{{ spark.points }}" fill="none" stroke="currentColor" stroke-width="2" vector-effect="non-scaling-stroke"/>
+  </svg>
+  <figcaption>{{ spark.start }}: {{ spark.lo|num }} → {{ spark.end }}: {{ spark.hi|num }} · {{ snapshots }} snapshots</figcaption>
+</figure>
+{% else %}
+<p class="note">{{ snapshots }} snapshot{{ '' if snapshots == 1 else 's' }} so far. Refresh this creator daily to chart growth and estimate followers gained per video.</p>
+{% endif %}
+
+<h2 class="sec">Posts <small>{{ posts|length }}</small></h2>
+<form class="toolbar" method="get" style="padding:0">
+  <label class="field">Sort
+    <select name="sort" onchange="this.form.requestSubmit()">
+      {% for key, label in [('outlier','Outlier score'),('engagement','Engagement rate'),('views','Views'),('newest','Newest')] %}
+      <option value="{{ key }}" {% if key == sort %}selected{% endif %}>{{ label }}</option>{% endfor %}
+    </select>
+  </label>
+</form>
+<div class="vgrid">
+  {% for v in posts %}{% include "_card.html" %}{% else %}<p class="note">No posts stored yet.</p>{% endfor %}
+</div>
+{% endblock %}
